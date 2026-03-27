@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DualClip.Core\DualClip.Core.csproj" />
+    <ProjectReference Include="..\DualClip.Capture\DualClip.Capture.csproj" />
+    <ProjectReference Include="..\DualClip.Buffering\DualClip.Buffering.csproj" />
+    <ProjectReference Include="..\DualClip.Encoding\DualClip.Encoding.csproj" />
+    <ProjectReference Include="..\DualClip.Infrastructure\DualClip.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PublishSingleFile)' != 'true'">
+    <Content Include="..\..\Tools\ffmpeg.exe">
+      <Link>Tools\ffmpeg.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <Content Include="..\..\Tools\ffmpeg.exe">
+      <Link>Tools\ffmpeg.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\..\packaging\Identity\Assets\Square44x44Logo.png">
+      <Link>Assets\DualClipLogo.png</Link>
+    </Resource>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.20348.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.20348.0</SupportedOSPlatformVersion>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\DualClip.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+</Project>
