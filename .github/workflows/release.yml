@@ -1,0 +1,182 @@
+name: Release DualClip
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version to release, for example 0.1.1 or v0.1.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $rawVersion = "${{ github.event.inputs.version }}"
+          }
+          else {
+            $rawVersion = "${{ github.ref_name }}"
+          }
+
+          $rawVersion = $rawVersion.Trim()
+
+          if ([string]::IsNullOrWhiteSpace($rawVersion)) {
+            throw "Release version is required."
+          }
+
+          if ($rawVersion.StartsWith('v')) {
+            $rawVersion = $rawVersion.Substring(1)
+          }
+
+          if ($rawVersion -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z\.-]+)?$') {
+            throw "Version '$rawVersion' is not a supported semantic version."
+          }
+
+          $tag = "v$rawVersion"
+          "version=$rawVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_name=DualClip $tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Download FFmpeg for CI packaging
+        shell: pwsh
+        run: |
+          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg-release-essentials.zip"
+          $extractRoot = Join-Path $env:RUNNER_TEMP "ffmpeg"
+
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $archivePath
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot -Force
+
+          $ffmpegExe = Get-ChildItem -Path $extractRoot -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if ([string]::IsNullOrWhiteSpace($ffmpegExe)) {
+            throw "Failed to locate ffmpeg.exe in the downloaded archive."
+          }
+
+          New-Item -ItemType Directory -Path "Tools" -Force | Out-Null
+          Copy-Item -LiteralPath $ffmpegExe -Destination "Tools\ffmpeg.exe" -Force
+
+      - name: Build portable release asset
+        id: package
+        shell: pwsh
+        run: |
+          .\scripts\Publish-DualClip-GitHubRelease.ps1 -Version "${{ steps.meta.outputs.version }}"
+
+          $assetPath = Join-Path $PWD "artifacts\github-release\${{ steps.meta.outputs.version }}\DualClip.App.exe"
+          if (-not (Test-Path -LiteralPath $assetPath)) {
+            throw "Release asset was not created at $assetPath."
+          }
+
+          "asset_path=$assetPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dualclip-${{ steps.meta.outputs.tag }}
+          path: ${{ steps.package.outputs.asset_path }}
+          if-no-files-found: error
+
+      - name: Create or update GitHub release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
+          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { owner, repo } = context.repo;
+            const tag = process.env.RELEASE_TAG;
+            const releaseName = process.env.RELEASE_NAME;
+            const assetPath = process.env.ASSET_PATH;
+
+            let releaseId;
+
+            try {
+              const existingRelease = await github.rest.repos.getReleaseByTag({
+                owner,
+                repo,
+                tag
+              });
+
+              releaseId = existingRelease.data.id;
+
+              await github.rest.repos.updateRelease({
+                owner,
+                repo,
+                release_id: releaseId,
+                tag_name: tag,
+                name: releaseName,
+                draft: false,
+                prerelease: false
+              });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              const createdRelease = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: releaseName,
+                draft: false,
+                prerelease: false,
+                generate_release_notes: true
+              });
+
+              releaseId = createdRelease.data.id;
+            }
+
+            const release = (await github.rest.repos.getRelease({
+              owner,
+              repo,
+              release_id: releaseId
+            })).data;
+
+            const assetName = path.basename(assetPath);
+            const existingAsset = release.assets.find(asset => asset.name === assetName);
+
+            if (existingAsset) {
+              await github.rest.repos.deleteReleaseAsset({
+                owner,
+                repo,
+                asset_id: existingAsset.id
+              });
+            }
+
+            const assetData = fs.readFileSync(assetPath);
+
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: releaseId,
+              name: assetName,
+              data: assetData,
+              headers: {
+                "content-type": "application/octet-stream",
+                "content-length": assetData.length
+              }
+            });

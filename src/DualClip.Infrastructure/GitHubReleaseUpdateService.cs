@@ -1,0 +1,483 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace DualClip.Infrastructure;
+
+public sealed class GitHubReleaseUpdateService
+{
+    private const string RepositoryOwner = "Rylogix";
+    private const string RepositoryName = "DualClip";
+    private const string LatestReleaseEndpoint = $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest";
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private static readonly string[] PreferredAssetNames = ["DualClip.App.exe", "DualClip.exe"];
+
+    private readonly HttpClient _httpClient;
+
+    public GitHubReleaseUpdateService()
+        : this(CreateHttpClient())
+    {
+    }
+
+    internal GitHubReleaseUpdateService(HttpClient httpClient)
+    {
+        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        CurrentVersion = ResolveCurrentVersion();
+        CurrentVersionText = ResolveCurrentVersionText(CurrentVersion);
+        CurrentExecutablePath = ResolveCurrentExecutablePath();
+    }
+
+    public Version CurrentVersion { get; }
+
+    public string CurrentVersionText { get; }
+
+    public string CurrentExecutablePath { get; }
+
+    public string ReleasesUrl => $"https://github.com/{RepositoryOwner}/{RepositoryName}/releases";
+
+    public async Task<GitHubUpdateCheckResult> CheckForUpdatesAsync(CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseEndpoint);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return new GitHubUpdateCheckResult(
+                IsUpdateAvailable: false,
+                Release: null,
+                StatusMessage: "No GitHub releases are published yet.");
+        }
+
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var release = await JsonSerializer.DeserializeAsync<GitHubReleaseResponse>(stream, SerializerOptions, cancellationToken)
+            ?? throw new InvalidOperationException("GitHub returned an empty release payload.");
+
+        if (release.Draft || release.Prerelease)
+        {
+            return new GitHubUpdateCheckResult(
+                IsUpdateAvailable: false,
+                Release: null,
+                StatusMessage: "No stable GitHub release is available yet.");
+        }
+
+        if (!TryParseVersion(release.TagName, out var releaseVersion))
+        {
+            throw new InvalidOperationException(
+                $"GitHub release tag '{release.TagName ?? "<missing>"}' is not a supported semantic version. Use tags like v0.2.0.");
+        }
+
+        var asset = SelectAsset(release.Assets);
+
+        if (asset is null)
+        {
+            return new GitHubUpdateCheckResult(
+                IsUpdateAvailable: false,
+                Release: null,
+                StatusMessage: $"GitHub release {release.TagName} is missing a portable .exe asset for DualClip.");
+        }
+
+        var releaseInfo = new GitHubUpdateRelease(
+            Version: releaseVersion,
+            VersionText: NormalizeVersionText(release.TagName, releaseVersion),
+            TagName: release.TagName ?? $"v{releaseVersion}",
+            DisplayName: string.IsNullOrWhiteSpace(release.Name) ? release.TagName ?? $"v{releaseVersion}" : release.Name.Trim(),
+            PublishedAtUtc: release.PublishedAt,
+            HtmlUrl: release.HtmlUrl ?? $"https://github.com/{RepositoryOwner}/{RepositoryName}/releases/tag/{Uri.EscapeDataString(release.TagName ?? $"v{releaseVersion}")}",
+            AssetName: asset.Name!,
+            AssetDownloadUrl: asset.BrowserDownloadUrl!);
+
+        if (releaseVersion <= CurrentVersion)
+        {
+            return new GitHubUpdateCheckResult(
+                IsUpdateAvailable: false,
+                Release: null,
+                StatusMessage: $"DualClip is up to date on v{CurrentVersionText}.");
+        }
+
+        var publishedAtText = releaseInfo.PublishedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var statusMessage = string.IsNullOrWhiteSpace(publishedAtText)
+            ? $"Update v{releaseInfo.VersionText} is available from GitHub."
+            : $"Update v{releaseInfo.VersionText} is available from GitHub. Published {publishedAtText}.";
+
+        return new GitHubUpdateCheckResult(
+            IsUpdateAvailable: true,
+            Release: releaseInfo,
+            StatusMessage: statusMessage);
+    }
+
+    public async Task<GitHubPreparedUpdate> DownloadUpdateAsync(
+        GitHubUpdateRelease release,
+        IProgress<double>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(release);
+        EnsureWritableInstallLocation();
+
+        var updateDirectory = AppPaths.GetUpdateDirectory(release.VersionText);
+        var stagingDirectory = Path.Combine(updateDirectory, DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(stagingDirectory);
+
+        var downloadPath = Path.Combine(stagingDirectory, release.AssetName);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, release.AssetDownloadUrl);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+
+        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var target = File.Create(downloadPath);
+
+        var totalLength = response.Content.Headers.ContentLength;
+        var buffer = new byte[81920];
+        long bytesReadTotal = 0;
+
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            bytesReadTotal += read;
+
+            if (totalLength is > 0)
+            {
+                progress?.Report((double)bytesReadTotal / totalLength.Value);
+            }
+        }
+
+        progress?.Report(1d);
+
+        return new GitHubPreparedUpdate(release, stagingDirectory, downloadPath);
+    }
+
+    public void LaunchUpdaterAndRestart(GitHubPreparedUpdate preparedUpdate)
+    {
+        ArgumentNullException.ThrowIfNull(preparedUpdate);
+        EnsureWritableInstallLocation();
+
+        var backupPath = BuildBackupExecutablePath(CurrentExecutablePath);
+        var scriptPath = Path.Combine(preparedUpdate.StagingDirectory, "apply-update.cmd");
+        File.WriteAllText(scriptPath, BuildUpdateScript(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments =
+                $"/c start \"\" /min \"{scriptPath}\" \"{CurrentExecutablePath}\" \"{preparedUpdate.DownloadedAssetPath}\" \"{backupPath}\" {Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}",
+            WorkingDirectory = preparedUpdate.StagingDirectory,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+        };
+
+        var updaterProcess = Process.Start(startInfo);
+        if (updaterProcess is null)
+        {
+            throw new InvalidOperationException("DualClip could not start the updater helper process.");
+        }
+    }
+
+    public void EnsureWritableInstallLocation()
+    {
+        var installDirectory = Path.GetDirectoryName(CurrentExecutablePath);
+
+        if (string.IsNullOrWhiteSpace(installDirectory) || !Directory.Exists(installDirectory))
+        {
+            throw new InvalidOperationException("DualClip could not determine its install folder for self-update.");
+        }
+
+        var probePath = Path.Combine(installDirectory, $".dualclip-update-{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            using var stream = new FileStream(probePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            stream.WriteByte(0);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(
+                $"DualClip cannot write to '{installDirectory}'. Move the app to a writable folder or update manually from {ReleasesUrl}.",
+                ex);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(probePath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var httpClient = new HttpClient();
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DualClip-Updater");
+        httpClient.Timeout = TimeSpan.FromSeconds(30);
+        return httpClient;
+    }
+
+    private static Version ResolveCurrentVersion()
+    {
+        var entryAssembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        var informationalVersion = entryAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        if (TryParseVersion(informationalVersion, out var informational))
+        {
+            return informational;
+        }
+
+        return entryAssembly.GetName().Version ?? new Version(0, 0, 0);
+    }
+
+    private static string ResolveCurrentVersionText(Version version)
+    {
+        var entryAssembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        var informationalVersion = entryAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            var plusSeparatorIndex = informationalVersion.IndexOf('+');
+            var cleaned = plusSeparatorIndex >= 0
+                ? informationalVersion[..plusSeparatorIndex]
+                : informationalVersion;
+
+            cleaned = cleaned.Trim();
+
+            if (cleaned.StartsWith('v') || cleaned.StartsWith('V'))
+            {
+                cleaned = cleaned[1..];
+            }
+
+            if (!string.IsNullOrWhiteSpace(cleaned))
+            {
+                return cleaned;
+            }
+        }
+
+        return version.ToString();
+    }
+
+    private static string ResolveCurrentExecutablePath()
+    {
+        var processPath = Environment.ProcessPath;
+
+        if (string.IsNullOrWhiteSpace(processPath))
+        {
+            throw new InvalidOperationException("DualClip could not determine the current executable path.");
+        }
+
+        return processPath;
+    }
+
+    private static GitHubReleaseAssetResponse? SelectAsset(IReadOnlyList<GitHubReleaseAssetResponse>? assets)
+    {
+        if (assets is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var currentExecutableName = Path.GetFileName(Environment.ProcessPath);
+
+        if (!string.IsNullOrWhiteSpace(currentExecutableName))
+        {
+            var currentAsset = assets.FirstOrDefault(asset =>
+                string.Equals(asset.Name, currentExecutableName, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl));
+
+            if (currentAsset is not null)
+            {
+                return currentAsset;
+            }
+        }
+
+        foreach (var preferredAssetName in PreferredAssetNames)
+        {
+            var preferredAsset = assets.FirstOrDefault(asset =>
+                string.Equals(asset.Name, preferredAssetName, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl));
+
+            if (preferredAsset is not null)
+            {
+                return preferredAsset;
+            }
+        }
+
+        return assets.FirstOrDefault(asset =>
+            asset.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true &&
+            !string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl));
+    }
+
+    private static bool TryParseVersion(string? value, out Version version)
+    {
+        version = new Version(0, 0, 0);
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+
+        if (normalized.StartsWith('v') || normalized.StartsWith('V'))
+        {
+            normalized = normalized[1..];
+        }
+
+        var metadataIndex = normalized.IndexOf('+');
+        if (metadataIndex >= 0)
+        {
+            normalized = normalized[..metadataIndex];
+        }
+
+        var preReleaseIndex = normalized.IndexOf('-');
+        if (preReleaseIndex >= 0)
+        {
+            normalized = normalized[..preReleaseIndex];
+        }
+
+        if (!Version.TryParse(normalized, out var parsedVersion) || parsedVersion is null)
+        {
+            return false;
+        }
+
+        version = parsedVersion;
+        return true;
+    }
+
+    private static string NormalizeVersionText(string? tagName, Version version)
+    {
+        if (string.IsNullOrWhiteSpace(tagName))
+        {
+            return version.ToString();
+        }
+
+        var normalized = tagName.Trim();
+
+        if (normalized.StartsWith('v') || normalized.StartsWith('V'))
+        {
+            normalized = normalized[1..];
+        }
+
+        var metadataIndex = normalized.IndexOf('+');
+        if (metadataIndex >= 0)
+        {
+            normalized = normalized[..metadataIndex];
+        }
+
+        return string.IsNullOrWhiteSpace(normalized)
+            ? version.ToString()
+            : normalized;
+    }
+
+    private static string BuildBackupExecutablePath(string currentExecutablePath)
+    {
+        var directory = Path.GetDirectoryName(currentExecutablePath) ?? throw new InvalidOperationException("DualClip could not determine its install folder.");
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(currentExecutablePath);
+        return Path.Combine(directory, $"{fileNameWithoutExtension}.previous.exe");
+    }
+
+    private static string BuildUpdateScript()
+    {
+        return """
+@echo off
+setlocal
+set "CURRENT_EXE=%~1"
+set "NEW_EXE=%~2"
+set "BACKUP_EXE=%~3"
+set "PROCESS_ID=%~4"
+set "STAGING_DIR=%~dp2"
+
+if "%CURRENT_EXE%"=="" exit /b 1
+if "%NEW_EXE%"=="" exit /b 1
+if "%PROCESS_ID%"=="" exit /b 1
+
+:wait_for_exit
+tasklist /FI "PID eq %PROCESS_ID%" 2>nul | find "%PROCESS_ID%" >nul
+if not errorlevel 1 (
+    timeout /t 1 /nobreak >nul
+    goto wait_for_exit
+)
+
+copy /Y "%CURRENT_EXE%" "%BACKUP_EXE%" >nul 2>nul
+copy /Y "%NEW_EXE%" "%CURRENT_EXE%" >nul
+if errorlevel 1 goto failure
+
+start "" "%CURRENT_EXE%"
+exit /b 0
+
+:failure
+if exist "%BACKUP_EXE%" start "" "%BACKUP_EXE%"
+exit /b 1
+""";
+    }
+
+    private sealed class GitHubReleaseResponse
+    {
+        [JsonPropertyName("tag_name")]
+        public string? TagName { get; set; }
+
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("html_url")]
+        public string? HtmlUrl { get; set; }
+
+        [JsonPropertyName("published_at")]
+        public DateTimeOffset? PublishedAt { get; set; }
+
+        [JsonPropertyName("draft")]
+        public bool Draft { get; set; }
+
+        [JsonPropertyName("prerelease")]
+        public bool Prerelease { get; set; }
+
+        [JsonPropertyName("assets")]
+        public List<GitHubReleaseAssetResponse> Assets { get; set; } = [];
+    }
+
+    private sealed class GitHubReleaseAssetResponse
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("browser_download_url")]
+        public string? BrowserDownloadUrl { get; set; }
+    }
+}
+
+public sealed record GitHubUpdateRelease(
+    Version Version,
+    string VersionText,
+    string TagName,
+    string DisplayName,
+    DateTimeOffset? PublishedAtUtc,
+    string HtmlUrl,
+    string AssetName,
+    string AssetDownloadUrl);
+
+public sealed record GitHubUpdateCheckResult(
+    bool IsUpdateAvailable,
+    GitHubUpdateRelease? Release,
+    string StatusMessage);
+
+public sealed record GitHubPreparedUpdate(
+    GitHubUpdateRelease Release,
+    string StagingDirectory,
+    string DownloadedAssetPath);

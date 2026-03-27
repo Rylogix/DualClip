@@ -15,10 +15,15 @@ public sealed class MainWindowViewModel : BindableObject
     private string _appStatus = "Ready.";
     private string _editorStatus = "No clip selected.";
     private string _errorMessage = string.Empty;
+    private string _currentVersionText = "Current version: unknown";
+    private string _updateStatusText = "Checks GitHub releases for new portable builds.";
+    private string _installUpdateButtonText = "Install Update";
     private bool _isCapturing;
     private bool _startCaptureOnStartup;
     private bool _startInBackgroundOnStartup;
     private bool _isSettingsTabSelected;
+    private bool _isCheckingForUpdates;
+    private bool _isUpdateAvailable;
 
     public MainWindowViewModel()
     {
@@ -121,6 +126,24 @@ public sealed class MainWindowViewModel : BindableObject
         set => SetProperty(ref _errorMessage, value);
     }
 
+    public string CurrentVersionText
+    {
+        get => _currentVersionText;
+        set => SetProperty(ref _currentVersionText, value);
+    }
+
+    public string UpdateStatusText
+    {
+        get => _updateStatusText;
+        set => SetProperty(ref _updateStatusText, value);
+    }
+
+    public string InstallUpdateButtonText
+    {
+        get => _installUpdateButtonText;
+        set => SetProperty(ref _installUpdateButtonText, value);
+    }
+
     public bool IsCapturing
     {
         get => _isCapturing;
@@ -147,6 +170,35 @@ public sealed class MainWindowViewModel : BindableObject
     public bool CanRemoveMonitorNodes => MonitorNodes.Count > 1;
 
     public bool IsMicrophoneSelectionEnabled => SelectedAudioMode?.Value == AudioCaptureMode.Microphone;
+
+    public bool IsCheckingForUpdates
+    {
+        get => _isCheckingForUpdates;
+        set
+        {
+            if (SetProperty(ref _isCheckingForUpdates, value))
+            {
+                RaisePropertyChanged(nameof(CanCheckForUpdates));
+                RaisePropertyChanged(nameof(CanInstallUpdate));
+            }
+        }
+    }
+
+    public bool IsUpdateAvailable
+    {
+        get => _isUpdateAvailable;
+        set
+        {
+            if (SetProperty(ref _isUpdateAvailable, value))
+            {
+                RaisePropertyChanged(nameof(CanInstallUpdate));
+            }
+        }
+    }
+
+    public bool CanCheckForUpdates => !IsCheckingForUpdates;
+
+    public bool CanInstallUpdate => IsUpdateAvailable && !IsCheckingForUpdates;
 
     public bool IsSettingsTabSelected
     {

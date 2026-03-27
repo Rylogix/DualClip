@@ -11,7 +11,18 @@ public static class AppPaths
 
     public static string BufferRoot => Path.Combine(AppDataRoot, "buffers");
 
+    public static string UpdatesRoot => Path.Combine(AppDataRoot, "updates");
+
     public static string GetBufferDirectory(string slotName) => Path.Combine(BufferRoot, slotName);
+
+    public static string GetUpdateDirectory(string versionText)
+    {
+        var safeVersion = string.IsNullOrWhiteSpace(versionText)
+            ? "unknown"
+            : string.Concat(versionText.Select(ch => char.IsLetterOrDigit(ch) || ch is '.' or '-' or '_' ? ch : '_'));
+
+        return Path.Combine(UpdatesRoot, safeVersion);
+    }
 
     public static string ResolveDefaultFfmpegPath()
     {

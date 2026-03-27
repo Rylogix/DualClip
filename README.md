@@ -4,7 +4,7 @@ DualClip is a Windows-only desktop MVP for instant replay clipping across two mo
 
 It continuously captures two selected displays with Windows Graphics Capture, writes rolling 1-second video segments for each display, and saves the most recent replay window to `.mp4` when a global hotkey is pressed.
 
-The current UI runs in dark mode, plays system clip sounds for save events, minimizes to the desktop tray instead of fully exiting when you close the main window, and now includes a borderless-capture launch path backed by package identity.
+The current UI runs in dark mode, plays system clip sounds for save events, minimizes to the desktop tray instead of fully exiting when you close the main window, includes a borderless-capture launch path backed by package identity, and can now self-update from GitHub Releases.
 
 ## Tech Stack
 
@@ -103,6 +103,46 @@ publish\DualClip.SingleFile\DualClip.App.exe
 
 This build is self-contained and now carries `ffmpeg.exe` with it automatically, so your friend does not need your repo layout or a separate `Tools\ffmpeg.exe`.
 
+## Updater
+
+- DualClip now checks `Rylogix/DualClip` GitHub Releases on startup and from the Settings tab.
+- The updater expects a stable GitHub release tag like `v0.2.0`.
+- The release must include a portable executable asset named `DualClip.App.exe`.
+- Clicking `Install vX.Y.Z` downloads the new `.exe`, closes DualClip, swaps the executable, and relaunches the app.
+- Self-update needs write access to the folder where `DualClip.App.exe` is running. If you run it from a protected folder, update manually or move it somewhere writable first.
+
+To build the GitHub release asset:
+
+```powershell
+.\Publish-DualClip-GitHubRelease.bat -Version 0.2.0
+```
+
+To build and upload the asset with GitHub CLI:
+
+```powershell
+.\Publish-DualClip-GitHubRelease.bat -Version 0.2.0 -Upload
+```
+
+That script publishes the app as a single-file `win-x64` executable, stamps the assembly version used by the updater, and writes the release asset here:
+
+```text
+artifacts\github-release\0.2.0\DualClip.App.exe
+```
+
+## GitHub Actions Releases
+
+- `.github/workflows/release.yml` now builds and publishes release assets automatically.
+- Push a tag like `v0.2.0` and GitHub Actions will build `DualClip.App.exe`, create or update the matching GitHub release, and upload the asset the updater expects.
+- You can also run the workflow manually with `workflow_dispatch` and provide a `version` input.
+- The workflow downloads `ffmpeg.exe` during CI because `Tools\ffmpeg.exe` is intentionally not stored in the repo.
+
+Tag-based release example:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
 ## Borderless Capture
 
 - The yellow Windows capture border can only be removed through the packaged Windows Graphics Capture path.
@@ -163,6 +203,7 @@ DualClip also plays a short system sound when a clip save is queued, completed, 
 - If a monitor resolution changes while capture is running, restart capture.
 - No automatic FFmpeg download or installer flow.
 - Borderless capture and easiest sharing pull in opposite directions right now: the easiest file to share is the standalone single-file build, but the cleanest no-border capture path still depends on package identity/registration.
+- The updater targets the portable single-file GitHub release asset. It does not update the identity-backed packaged launch path.
 - No live preview window.
 - Hotkey registration errors depend on Windows availability of the requested combination.
 - Capture and clip assembly are optimized for simplicity and debuggability, not final production performance.

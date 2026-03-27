@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private const int AudioAlignmentContextSeconds = 12;
 
     private readonly JsonAppConfigStore _configStore = new();
+    private readonly GitHubReleaseUpdateService _updateService = new();
     private readonly MonitorEnumerationService _monitorService = new();
     private readonly GlobalHotkeyManager _hotkeyManager = new();
     private readonly AudioDeviceService _audioDeviceService = new();
@@ -40,6 +41,7 @@ public partial class MainWindow : Window
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
     private bool _hasShownTrayTip;
+    private bool _hasShownUpdateTip;
     private bool _isEditorBusy;
     private bool _isUpdatingTransformControls;
     private double _selectedClipDurationSeconds;
@@ -62,11 +64,13 @@ public partial class MainWindow : Window
     private bool _flipHorizontal;
     private bool _flipVertical;
     private AudioReplaySession? _audioSession;
+    private GitHubUpdateRelease? _pendingUpdate;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
+        _viewModel.CurrentVersionText = $"Current version: v{_updateService.CurrentVersionText}";
         PreviewMediaElement.SpeedRatio = 1.0d;
         _notifyIcon = CreateNotifyIcon();
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
@@ -83,6 +87,7 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         await LoadStateAsync();
+        _ = CheckForUpdatesAsync(isManual: false);
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -225,6 +230,16 @@ public partial class MainWindow : Window
     private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
     {
         await SaveSettingsAsync();
+    }
+
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckForUpdatesAsync(isManual: true);
+    }
+
+    private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        await InstallUpdateAsync();
     }
 
     private void AddMonitorNodeButton_Click(object sender, RoutedEventArgs e)
@@ -517,6 +532,104 @@ public partial class MainWindow : Window
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Settings were not saved.";
         }
+    }
+
+    private async Task CheckForUpdatesAsync(bool isManual)
+    {
+        if (_viewModel.IsCheckingForUpdates)
+        {
+            return;
+        }
+
+        _viewModel.IsCheckingForUpdates = true;
+        _viewModel.UpdateStatusText = isManual
+            ? "Checking GitHub releases..."
+            : "Checking GitHub for updates...";
+
+        try
+        {
+            var result = await _updateService.CheckForUpdatesAsync();
+            SetPendingUpdate(result.Release);
+            _viewModel.UpdateStatusText = result.StatusMessage;
+
+            if (result.IsUpdateAvailable && result.Release is not null && !_hasShownUpdateTip)
+            {
+                ShowUpdateAvailableNotification(result.Release);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetPendingUpdate(null);
+            _viewModel.UpdateStatusText = isManual
+                ? $"GitHub update check failed: {ex.Message}"
+                : "Automatic update check could not reach GitHub.";
+        }
+        finally
+        {
+            _viewModel.IsCheckingForUpdates = false;
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (_pendingUpdate is null || _viewModel.IsCheckingForUpdates)
+        {
+            return;
+        }
+
+        var release = _pendingUpdate;
+        _viewModel.IsCheckingForUpdates = true;
+        _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub...";
+
+        try
+        {
+            var progress = new Progress<double>(value =>
+            {
+                _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub... {value:P0}";
+            });
+
+            var preparedUpdate = await _updateService.DownloadUpdateAsync(release, progress);
+            _viewModel.UpdateStatusText = $"Installing v{release.VersionText} and restarting DualClip...";
+
+            if (_viewModel.IsCapturing)
+            {
+                _viewModel.AppStatus = "Stopping capture for update...";
+                UpdateNotifyIconText();
+                await StopCaptureAsync();
+            }
+
+            _updateService.LaunchUpdaterAndRestart(preparedUpdate);
+            _isExitRequested = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.UpdateStatusText = $"Update install failed: {ex.Message}";
+        }
+        finally
+        {
+            if (!_isExitRequested)
+            {
+                _viewModel.IsCheckingForUpdates = false;
+            }
+        }
+    }
+
+    private void SetPendingUpdate(GitHubUpdateRelease? release)
+    {
+        _pendingUpdate = release;
+        _viewModel.IsUpdateAvailable = release is not null;
+        _viewModel.InstallUpdateButtonText = release is null
+            ? "Install Update"
+            : $"Install v{release.VersionText}";
+    }
+
+    private void ShowUpdateAvailableNotification(GitHubUpdateRelease release)
+    {
+        _notifyIcon.BalloonTipTitle = "DualClip update available";
+        _notifyIcon.BalloonTipText = $"Version v{release.VersionText} is available. Open Settings to install it.";
+        _notifyIcon.ShowBalloonTip(4000);
+        _hasShownUpdateTip = true;
     }
 
     private AppConfig BuildValidatedConfig()
@@ -2115,6 +2228,7 @@ public partial class MainWindow : Window
     {
         var contextMenu = new Forms.ContextMenuStrip();
         contextMenu.Items.Add("Open DualClip", null, (_, _) => RestoreFromTray());
+        contextMenu.Items.Add("Check for Updates", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => _ = CheckForUpdatesAsync(isManual: true))));
         contextMenu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
         var notifyIcon = new Forms.NotifyIcon

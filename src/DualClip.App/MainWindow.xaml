@@ -921,6 +921,33 @@
                                           IsEnabled="{Binding StartCaptureOnStartup}"
                                           Content="Start in background (tray)" />
                             </StackPanel>
+                            <Border Margin="0,12,0,0"
+                                    Padding="12"
+                                    Background="{StaticResource PanelAltBrush}"
+                                    BorderBrush="{StaticResource BorderBrushDark}"
+                                    BorderThickness="1"
+                                    CornerRadius="10">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="Updates" />
+                                    <TextBlock Margin="0,6,0,0"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               Text="{Binding CurrentVersionText}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Text="{Binding UpdateStatusText}"
+                                               TextWrapping="Wrap" />
+                                    <WrapPanel Margin="0,12,0,0">
+                                        <Button Margin="0,0,8,0"
+                                                Padding="12,4"
+                                                Click="CheckForUpdatesButton_Click"
+                                                IsEnabled="{Binding CanCheckForUpdates}"
+                                                Content="Check for Updates" />
+                                        <Button Padding="12,4"
+                                                Click="InstallUpdateButton_Click"
+                                                IsEnabled="{Binding CanInstallUpdate}"
+                                                Content="{Binding InstallUpdateButtonText}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
                             <Button Margin="0,12,0,0"
                                     Padding="12,4"
                                     HorizontalAlignment="Left"
