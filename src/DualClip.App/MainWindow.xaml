@@ -883,6 +883,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="130" />
@@ -905,8 +906,30 @@
                         <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Microphone" />
                         <ComboBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding Microphones}" SelectedItem="{Binding SelectedMicrophone}" IsEnabled="{Binding IsMicrophoneSelectionEnabled}" />
 
-                        <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Top" Text="FFmpeg Path" />
-                        <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2">
+                        <TextBlock Grid.Row="5" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Clip Audio" />
+                        <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10">
+                            <DockPanel LastChildFill="False">
+                                <Slider Width="220"
+                                        Minimum="0"
+                                        Maximum="200"
+                                        TickFrequency="10"
+                                        IsSnapToTickEnabled="False"
+                                        IsEnabled="{Binding IsClipAudioVolumeEnabled}"
+                                        Value="{Binding ClipAudioVolumePercent}" />
+                                <TextBlock Width="48"
+                                           Margin="12,0,0,0"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right"
+                                           Text="{Binding ClipAudioVolumePercent, StringFormat={}{0:0}%}" />
+                            </DockPanel>
+                            <TextBlock Margin="0,6,0,0"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Text="Adjusts saved clip audio level from 0% to 200%."
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Top" Text="FFmpeg Path" />
+                        <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2">
                             <DockPanel LastChildFill="False">
                                 <TextBox Width="230" Margin="0,0,8,0" Text="{Binding FfmpegPath, UpdateSourceTrigger=PropertyChanged}" />
                                 <Button Padding="12,4" Click="BrowseFfmpegButton_Click" Content="Browse..." />
@@ -1039,53 +1062,76 @@
                                 <Button DockPanel.Dock="Right" Width="96" Height="28" Margin="8,0,0,0" Padding="0" Click="RefreshClipLibraryButton_Click" Content="Refresh" />
                             </DockPanel>
 
-                            <ListBox x:Name="ClipListBox"
-                                     Grid.Row="1"
-                                     MaxHeight="420"
-                                     ItemsSource="{Binding ClipLibrary}"
-                                     SelectionChanged="ClipListBox_SelectionChanged">
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
-                                        <Setter Property="Margin" Value="0,0,0,3" />
-                                        <Setter Property="Padding" Value="10,7" />
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Grid.Row="1"
-                                                       Margin="0,3,0,0"
-                                                       FontSize="11"
-                                                       Foreground="{StaticResource MutedTextBrush}"
-                                                       Text="{Binding MetadataText}"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <Button Grid.Column="1"
-                                                    Grid.RowSpan="2"
-                                                    Width="30"
-                                                    Height="30"
-                                                    Margin="10,0,0,0"
-                                                    Padding="0"
-                                                    VerticalAlignment="Center"
-                                                    Focusable="False"
-                                                    Style="{StaticResource GhostButtonStyle}"
-                                                    Click="DeleteClipButton_Click"
-                                                    Tag="{Binding FilePath}"
-                                                    ToolTip="Delete this clip">
-                                                <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="14" Text="&#xE74D;" />
-                                            </Button>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                            <Grid Grid.Row="1">
+                                <ListBox x:Name="ClipListBox"
+                                         MaxHeight="420"
+                                         ItemsSource="{Binding ClipLibrary}"
+                                         SelectionChanged="ClipListBox_SelectionChanged">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                                            <Setter Property="Margin" Value="0,0,0,3" />
+                                            <Setter Property="Padding" Value="10,7" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding FileName}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Row="1"
+                                                           Margin="0,3,0,0"
+                                                           FontSize="11"
+                                                           Foreground="{StaticResource MutedTextBrush}"
+                                                           Text="{Binding MetadataText}"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <Button Grid.Column="1"
+                                                        Grid.RowSpan="2"
+                                                        Width="30"
+                                                        Height="30"
+                                                        Margin="10,0,0,0"
+                                                        Padding="0"
+                                                        VerticalAlignment="Center"
+                                                        Focusable="False"
+                                                        Style="{StaticResource GhostButtonStyle}"
+                                                        Click="DeleteClipButton_Click"
+                                                        Tag="{Binding FilePath}"
+                                                        ToolTip="Delete this clip">
+                                                    <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="14" Text="&#xE74D;" />
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <TextBlock HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           IsHitTestVisible="False"
+                                           FontSize="20"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           Opacity="0.4"
+                                           Text="This Folder is Empty"
+                                           TextAlignment="Center"
+                                           Visibility="Collapsed">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ClipLibrary.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
 
                             <StackPanel Grid.Row="2" Margin="0,10,0,0">
                                 <GroupBox Header="Transform" Padding="12">
@@ -1191,7 +1237,7 @@
                                                   Click="EditorToolToggleButton_Click"
                                                   Tag="crop"
                                                   ToolTip="Show the crop overlay and resize handles"
-                                                  Content="Crop" />
+                                                  Content="Crop (C)" />
                                     <ToggleButton x:Name="ToolTransformButton"
                                                   Style="{StaticResource EditorToolToggleButtonStyle}"
                                                   Click="EditorToolToggleButton_Click"
@@ -1386,7 +1432,7 @@
                                                                Margin="8,0,0,0"
                                                                VerticalAlignment="Center"
                                                                FontWeight="SemiBold"
-                                                               Text="Play" />
+                                                               Text="Play (Space)" />
                                                 </StackPanel>
                                             </Button>
                                             <Button x:Name="StepBackButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="StepBackButton_Click" Content="Prev Frame" Visibility="Collapsed" />
@@ -1435,6 +1481,15 @@
                                         </Border>
 
                                         <DockPanel Grid.Row="1" Margin="0,10,0,0" LastChildFill="False">
+                                            <Slider x:Name="TimelineZoomSlider"
+                                                    DockPanel.Dock="Right"
+                                                    Width="180"
+                                                    Margin="12,0,0,0"
+                                                    Minimum="40"
+                                                    Maximum="260"
+                                                    ToolTip="Timeline zoom"
+                                                    Value="{Binding Editor.TimelineZoomPercent}"
+                                                    ValueChanged="TimelineZoomSlider_ValueChanged" />
                                             <TextBlock x:Name="TrimRangeTextBlock" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Text="Trim: 0.00s to 0.00s" />
                                         </DockPanel>
                                     </Grid>
@@ -1450,29 +1505,12 @@
                                 BorderThickness="1"
                                 CornerRadius="10">
                             <WrapPanel>
-                                <TextBlock Margin="0,0,10,0" VerticalAlignment="Center" Style="{StaticResource InspectorLabelStyle}" Text="Timeline Zoom" />
-                                <Slider x:Name="TimelineZoomSlider" Width="180" Minimum="40" Maximum="260" Value="{Binding Editor.TimelineZoomPercent}" ValueChanged="TimelineZoomSlider_ValueChanged" />
-                                <TextBlock Margin="12,0,12,0" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Text="{Binding Editor.TimelineZoomPercent, StringFormat={}{0:0}%}" />
                                 <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" IsChecked="{Binding Editor.IsSnappingEnabled}" Content="Snap" />
-                                <Button x:Name="SplitSegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="SplitSegmentButton_Click" Content="Split" />
-                                <Button x:Name="CopySegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="CopySegmentButton_Click" Content="Copy" />
-                                <Button x:Name="PasteSegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="PasteSegmentButton_Click" Content="Paste After" />
-                                <Button x:Name="DeleteSegmentButton" Style="{StaticResource GhostButtonStyle}" Click="DeleteSegmentButton_Click" Content="Delete" />
+                                <Button x:Name="SplitSegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="SplitSegmentButton_Click" Content="Split (Ctrl + X)" />
+                                <Button x:Name="CopySegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="CopySegmentButton_Click" Content="Copy (Ctrl + C)" />
+                                <Button x:Name="PasteSegmentButton" Margin="0,0,8,0" Style="{StaticResource GhostButtonStyle}" Click="PasteSegmentButton_Click" Content="Paste After (Ctrl + V)" />
+                                <Button x:Name="DeleteSegmentButton" Style="{StaticResource GhostButtonStyle}" Click="DeleteSegmentButton_Click" Content="Delete (Del)" />
                             </WrapPanel>
-                        </Border>
-
-                        <Border Grid.Row="3" Padding="12" Background="{StaticResource PanelAltBrush}" BorderBrush="{StaticResource BorderBrushDark}" BorderThickness="1" CornerRadius="10">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="Controls" />
-                                <TextBlock Margin="0,6,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"
-                                           Text="Click the timeline to move the playhead, drag the white handle to scrub, drag the trim handles to set in and out points, and drag a clip block to reorder the timeline."
-                                           TextWrapping="Wrap" />
-                                <TextBlock Margin="0,6,0,0"
-                                           Foreground="{StaticResource MutedTextBrush}"
-                                           Text="Shortcuts: Space play or pause, Ctrl+X split, Ctrl+C copy segment, Ctrl+V paste after, Delete remove segment, Ctrl+Z undo, R reset transform, C crop mode."
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
                         </Border>
                     </Grid>
                 </Grid>

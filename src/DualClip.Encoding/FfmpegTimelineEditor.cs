@@ -75,6 +75,7 @@ public sealed class FfmpegTimelineEditor
                 request.FfmpegPath,
                 tempSegmentPaths,
                 audioSegmentPaths: null,
+                clipAudioVolumePercent: 100d,
                 request.OutputPath,
                 cancellationToken).ConfigureAwait(false);
         }

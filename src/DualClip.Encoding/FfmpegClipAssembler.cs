@@ -16,6 +16,7 @@ public sealed class FfmpegClipAssembler
         string ffmpegPath,
         IReadOnlyList<string> segmentPaths,
         IReadOnlyList<string>? audioSegmentPaths,
+        double clipAudioVolumePercent,
         string outputPath,
         CancellationToken cancellationToken)
     {
@@ -77,7 +78,7 @@ public sealed class FfmpegClipAssembler
                 var audioAlignment = BuildAudioAlignment(stagedVideoSegments, stagedAudioSegments);
                 await File.WriteAllLinesAsync(audioConcatPath, stagedAudioSegments.Select(segment => BuildConcatLine(segment.Path)), cancellationToken).ConfigureAwait(false);
                 await BuildAudioAsync(ffmpegPath, audioConcatPath, tempAudioPath, cancellationToken).ConfigureAwait(false);
-                await MuxAudioAsync(ffmpegPath, tempVideoPath, tempAudioPath, outputPath, audioAlignment, cancellationToken).ConfigureAwait(false);
+                await MuxAudioAsync(ffmpegPath, tempVideoPath, tempAudioPath, outputPath, audioAlignment, clipAudioVolumePercent, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
@@ -174,11 +175,12 @@ public sealed class FfmpegClipAssembler
         string audioPath,
         string outputPath,
         AudioAlignment audioAlignment,
+        double clipAudioVolumePercent,
         CancellationToken cancellationToken)
     {
         TryDelete(outputPath);
 
-        var audioFilter = BuildAudioAlignmentFilter(audioAlignment);
+        var audioFilter = BuildAudioAlignmentFilter(audioAlignment, clipAudioVolumePercent);
 
         await _runner.RunAsync(
             ffmpegPath,
@@ -313,23 +315,25 @@ public sealed class FfmpegClipAssembler
         return new AudioAlignment(offsetSeconds, targetDurationSeconds);
     }
 
-    private static string BuildAudioAlignmentFilter(AudioAlignment audioAlignment)
+    private static string BuildAudioAlignmentFilter(AudioAlignment audioAlignment, double clipAudioVolumePercent)
     {
+        var volumeMultiplier = Math.Clamp(clipAudioVolumePercent, 0d, 200d) / 100d;
         var duration = audioAlignment.TargetDurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+        var volumeText = volumeMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
 
         if (audioAlignment.OffsetSeconds > 0.0005d)
         {
             var delayMilliseconds = Math.Max(0, (int)Math.Round(audioAlignment.OffsetSeconds * 1000d, MidpointRounding.AwayFromZero));
-            return $"[1:a]adelay={delayMilliseconds}:all=1,apad,atrim=duration={duration}[aout]";
+            return $"[1:a]volume={volumeText},adelay={delayMilliseconds}:all=1,apad,atrim=duration={duration}[aout]";
         }
 
         if (audioAlignment.OffsetSeconds < -0.0005d)
         {
             var trimStart = Math.Abs(audioAlignment.OffsetSeconds).ToString("0.###", CultureInfo.InvariantCulture);
-            return $"[1:a]atrim=start={trimStart},asetpts=PTS-STARTPTS,apad,atrim=duration={duration}[aout]";
+            return $"[1:a]volume={volumeText},atrim=start={trimStart},asetpts=PTS-STARTPTS,apad,atrim=duration={duration}[aout]";
         }
 
-        return $"[1:a]apad,atrim=duration={duration}[aout]";
+        return $"[1:a]volume={volumeText},apad,atrim=duration={duration}[aout]";
     }
 
     private static bool TryGetSyntheticSegmentStart(

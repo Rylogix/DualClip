@@ -18,6 +18,8 @@ public sealed class AppConfig
 
     public string? MicrophoneDeviceId { get; set; }
 
+    public int ClipAudioVolumePercent { get; set; } = 100;
+
     public string OutputFolderA { get; set; } = string.Empty;
 
     public string OutputFolderB { get; set; } = string.Empty;

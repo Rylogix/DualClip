@@ -9,6 +9,7 @@ public sealed class MainWindowViewModel : BindableObject
     private SelectionOption<VideoQualityPreset>? _selectedVideoQuality;
     private SelectionOption<AudioCaptureMode>? _selectedAudioMode;
     private AudioDeviceDescriptor? _selectedMicrophone;
+    private double _clipAudioVolumePercent = 100d;
     private string _replayLengthSecondsText = "30";
     private string _fpsTargetText = "30";
     private string _ffmpegPath = string.Empty;
@@ -68,6 +69,7 @@ public sealed class MainWindowViewModel : BindableObject
             if (SetProperty(ref _selectedAudioMode, value))
             {
                 RaisePropertyChanged(nameof(IsMicrophoneSelectionEnabled));
+                RaisePropertyChanged(nameof(IsClipAudioVolumeEnabled));
             }
         }
     }
@@ -76,6 +78,12 @@ public sealed class MainWindowViewModel : BindableObject
     {
         get => _selectedMicrophone;
         set => SetProperty(ref _selectedMicrophone, value);
+    }
+
+    public double ClipAudioVolumePercent
+    {
+        get => _clipAudioVolumePercent;
+        set => SetProperty(ref _clipAudioVolumePercent, Math.Clamp(value, 0d, 200d));
     }
 
     public string ReplayLengthSecondsText
@@ -171,6 +179,8 @@ public sealed class MainWindowViewModel : BindableObject
 
     public bool IsMicrophoneSelectionEnabled => SelectedAudioMode?.Value == AudioCaptureMode.Microphone;
 
+    public bool IsClipAudioVolumeEnabled => SelectedAudioMode?.Value != AudioCaptureMode.None;
+
     public bool IsCheckingForUpdates
     {
         get => _isCheckingForUpdates;
@@ -240,6 +250,7 @@ public sealed class MainWindowViewModel : BindableObject
         SelectedVideoQuality = VideoQualities.FirstOrDefault(item => item.Value == config.VideoQuality) ?? VideoQualities.FirstOrDefault();
         SelectedAudioMode = AudioModes.FirstOrDefault(item => item.Value == config.AudioMode) ?? AudioModes.FirstOrDefault();
         SelectedMicrophone = Microphones.FirstOrDefault(item => item.Id == config.MicrophoneDeviceId) ?? Microphones.FirstOrDefault();
+        ClipAudioVolumePercent = config.ClipAudioVolumePercent;
 
         ReplayLengthSecondsText = config.ReplayLengthSeconds.ToString();
         FpsTargetText = config.FpsTarget.ToString();

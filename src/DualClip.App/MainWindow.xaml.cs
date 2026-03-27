@@ -406,9 +406,7 @@ public partial class MainWindow : Window
             }
 
             _viewModel.IsCapturing = true;
-            _viewModel.AppStatus = borderlessCaptureAllowed
-                ? "Capture is running."
-                : "Capture is running with the standard Windows capture border.";
+            _viewModel.AppStatus = string.Empty;
             UpdateNotifyIconText();
         }
         catch (Exception ex)
@@ -441,7 +439,7 @@ public partial class MainWindow : Window
         }
 
         _viewModel.IsCapturing = false;
-        _viewModel.AppStatus = "Capture stopped.";
+        _viewModel.AppStatus = string.Empty;
         UpdateNotifyIconText();
     }
 
@@ -460,7 +458,10 @@ public partial class MainWindow : Window
         try
         {
             var selectedAudioSegments = audioSegments ?? GetAudioSegments(monitorSession.Options.ReplayLengthSeconds);
-            var outputPath = await monitorSession.SaveClipAsync(node.OutputFolder, selectedAudioSegments);
+            var outputPath = await monitorSession.SaveClipAsync(
+                node.OutputFolder,
+                selectedAudioSegments,
+                Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d));
             node.Status = $"Saved clip: {outputPath}";
 
             if (refreshClipLibrary)
@@ -684,6 +685,7 @@ public partial class MainWindow : Window
             ?? throw new InvalidOperationException("Choose a clip quality before starting capture.");
         var selectedAudioMode = _viewModel.SelectedAudioMode?.Value
             ?? throw new InvalidOperationException("Choose an audio source before starting capture.");
+        var clipAudioVolumePercent = (int)Math.Round(Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d), MidpointRounding.AwayFromZero);
 
         if (selectedAudioMode == AudioCaptureMode.Microphone && _viewModel.SelectedMicrophone is null)
         {
@@ -731,6 +733,7 @@ public partial class MainWindow : Window
             FpsTarget = fpsTarget,
             VideoQuality = selectedVideoQuality,
             AudioMode = selectedAudioMode,
+            ClipAudioVolumePercent = clipAudioVolumePercent,
             MicrophoneDeviceId = _viewModel.SelectedMicrophone?.Id,
             OutputFolderA = monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
             OutputFolderB = monitorNodeConfigs.ElementAtOrDefault(1)?.OutputFolder ?? monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
@@ -1963,8 +1966,8 @@ public partial class MainWindow : Window
         }
 
         PlayPreviewButtonGlyph.Text = _isTimelinePlaybackActive ? "\uE769" : "\uE768";
-        PlayPreviewButtonLabel.Text = _isTimelinePlaybackActive ? "Pause" : "Play";
-        PlayPreviewButton.ToolTip = _isTimelinePlaybackActive ? "Pause preview" : "Play preview";
+        PlayPreviewButtonLabel.Text = _isTimelinePlaybackActive ? "Pause (Space)" : "Play (Space)";
+        PlayPreviewButton.ToolTip = _isTimelinePlaybackActive ? "Pause preview (Space)" : "Play preview (Space)";
     }
 
     private ClipLibraryItem? GetSelectedClip()

@@ -183,6 +183,7 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     public async Task<string> SaveClipAsync(
         string outputDirectory,
         IReadOnlyList<string>? audioSegments = null,
+        double clipAudioVolumePercent = 100d,
         CancellationToken cancellationToken = default)
     {
         Directory.CreateDirectory(outputDirectory);
@@ -207,6 +208,7 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
                 Options.FfmpegPath,
                 segments,
                 audioSegments,
+                clipAudioVolumePercent,
                 outputPath,
                 cancellationToken).ConfigureAwait(false);
         }

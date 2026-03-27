@@ -57,6 +57,7 @@ public sealed class JsonAppConfigStore
         config.FpsTarget = config.FpsTarget <= 0 ? defaults.FpsTarget : config.FpsTarget;
         config.VideoQuality = Enum.IsDefined(config.VideoQuality) ? config.VideoQuality : defaults.VideoQuality;
         config.AudioMode = Enum.IsDefined(config.AudioMode) ? config.AudioMode : defaults.AudioMode;
+        config.ClipAudioVolumePercent = Math.Clamp(config.ClipAudioVolumePercent, 0, 200);
         config.MicrophoneDeviceId = string.IsNullOrWhiteSpace(config.MicrophoneDeviceId) ? null : config.MicrophoneDeviceId;
         config.OutputFolderA = string.IsNullOrWhiteSpace(config.OutputFolderA) ? defaults.OutputFolderA : config.OutputFolderA;
         config.OutputFolderB = string.IsNullOrWhiteSpace(config.OutputFolderB) ? defaults.OutputFolderB : config.OutputFolderB;
