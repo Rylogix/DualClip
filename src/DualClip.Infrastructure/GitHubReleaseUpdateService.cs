@@ -130,39 +130,17 @@ public sealed class GitHubReleaseUpdateService
 
         var downloadPath = Path.Combine(stagingDirectory, release.AssetName);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, release.AssetDownloadUrl);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
-
-        using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var target = File.Create(downloadPath);
-
-        var totalLength = response.Content.Headers.ContentLength;
-        var buffer = new byte[81920];
-        long bytesReadTotal = 0;
-
-        while (true)
+        try
         {
-            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-            if (read == 0)
-            {
-                break;
-            }
-
-            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            bytesReadTotal += read;
-
-            if (totalLength is > 0)
-            {
-                progress?.Report((double)bytesReadTotal / totalLength.Value);
-            }
+            await DownloadReleaseAssetAsync(release.AssetDownloadUrl, downloadPath, progress, cancellationToken);
+            return new GitHubPreparedUpdate(release, stagingDirectory, downloadPath);
         }
-
-        progress?.Report(1d);
-
-        return new GitHubPreparedUpdate(release, stagingDirectory, downloadPath);
+        catch
+        {
+            TryDeleteFile(downloadPath);
+            TryDeleteDirectory(stagingDirectory);
+            throw;
+        }
     }
 
     public void LaunchUpdaterAndRestart(GitHubPreparedUpdate preparedUpdate)
@@ -174,14 +152,17 @@ public sealed class GitHubReleaseUpdateService
         var scriptPath = Path.Combine(preparedUpdate.StagingDirectory, "apply-update.cmd");
         File.WriteAllText(scriptPath, BuildUpdateScript(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
+        var commandText =
+            $"\"{scriptPath}\" \"{CurrentExecutablePath}\" \"{preparedUpdate.DownloadedAssetPath}\" \"{backupPath}\" {Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}";
+
         var startInfo = new ProcessStartInfo
         {
             FileName = "cmd.exe",
-            Arguments =
-                $"/c start \"\" /min \"{scriptPath}\" \"{CurrentExecutablePath}\" \"{preparedUpdate.DownloadedAssetPath}\" \"{backupPath}\" {Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}",
+            Arguments = $"/d /c {commandText}",
             WorkingDirectory = preparedUpdate.StagingDirectory,
             CreateNoWindow = true,
             UseShellExecute = false,
+            WindowStyle = ProcessWindowStyle.Hidden,
         };
 
         var updaterProcess = Process.Start(startInfo);
@@ -231,6 +212,66 @@ public sealed class GitHubReleaseUpdateService
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DualClip-Updater");
         httpClient.Timeout = TimeSpan.FromSeconds(30);
         return httpClient;
+    }
+
+    private async Task DownloadReleaseAssetAsync(
+        string assetDownloadUrl,
+        string downloadPath,
+        IProgress<double>? progress,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 2;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, assetDownloadUrl);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+
+                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                response.EnsureSuccessStatusCode();
+
+                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var target = File.Create(downloadPath);
+
+                var totalLength = response.Content.Headers.ContentLength;
+                var buffer = new byte[81920];
+                long bytesReadTotal = 0;
+
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    bytesReadTotal += read;
+
+                    if (totalLength is > 0)
+                    {
+                        progress?.Report((double)bytesReadTotal / totalLength.Value);
+                    }
+                }
+
+                await target.FlushAsync(cancellationToken);
+
+                if (totalLength is > 0 && bytesReadTotal != totalLength.Value)
+                {
+                    throw new InvalidOperationException(
+                        $"GitHub returned an incomplete update download. Expected {totalLength.Value} bytes but received {bytesReadTotal}.");
+                }
+
+                progress?.Report(1d);
+                return;
+            }
+            catch when (attempt < maxAttempts && !cancellationToken.IsCancellationRequested)
+            {
+                TryDeleteFile(downloadPath);
+            }
+        }
     }
 
     private static Version ResolveCurrentVersion()
@@ -393,6 +434,34 @@ public sealed class GitHubReleaseUpdateService
         return Path.Combine(directory, $"{fileNameWithoutExtension}.previous.exe");
     }
 
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
     private static string BuildUpdateScript()
     {
         return """
@@ -402,7 +471,6 @@ set "CURRENT_EXE=%~1"
 set "NEW_EXE=%~2"
 set "BACKUP_EXE=%~3"
 set "PROCESS_ID=%~4"
-set "STAGING_DIR=%~dp2"
 
 if "%CURRENT_EXE%"=="" exit /b 1
 if "%NEW_EXE%"=="" exit /b 1
