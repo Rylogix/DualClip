@@ -16,7 +16,7 @@ public sealed class MainWindowViewModel : BindableObject
     private string _editorStatus = "No clip selected.";
     private string _errorMessage = string.Empty;
     private string _currentVersionText = "Current version: unknown";
-    private string _updateStatusText = "Checks GitHub releases for new portable builds.";
+    private string _updateStatusText = "Automatically checks GitHub releases on startup and installs newer portable builds.";
     private string _installUpdateButtonText = "Install Update";
     private bool _isCapturing;
     private bool _startCaptureOnStartup;

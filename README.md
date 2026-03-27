@@ -105,10 +105,11 @@ This build is self-contained and now carries `ffmpeg.exe` with it automatically,
 
 ## Updater
 
-- DualClip now checks `Rylogix/DualClip` GitHub Releases on startup and from the Settings tab.
+- DualClip now checks `Rylogix/DualClip` GitHub Releases on startup and automatically installs a newer portable build when one is available.
 - The updater expects a stable GitHub release tag like `v0.2.0`.
 - The release must include a portable executable asset named `DualClip.App.exe`.
-- Clicking `Install vX.Y.Z` downloads the new `.exe`, closes DualClip, swaps the executable, and relaunches the app.
+- On startup, DualClip downloads the new `.exe`, closes itself, swaps the executable, and relaunches automatically.
+- The Settings tab still lets you check manually and trigger installation if the automatic attempt fails.
 - Self-update needs write access to the folder where `DualClip.App.exe` is running. If you run it from a protected folder, update manually or move it somewhere writable first.
 
 To build the GitHub release asset:

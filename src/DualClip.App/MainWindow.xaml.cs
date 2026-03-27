@@ -87,7 +87,6 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         await LoadStateAsync();
-        _ = CheckForUpdatesAsync(isManual: false);
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -234,12 +233,12 @@ public partial class MainWindow : Window
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
-        await CheckForUpdatesAsync(isManual: true);
+        await CheckForUpdatesAsync(isManual: true, installWhenAvailable: false);
     }
 
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
     {
-        await InstallUpdateAsync();
+        await InstallPendingUpdateAsync(isAutomatic: false);
     }
 
     private void AddMonitorNodeButton_Click(object sender, RoutedEventArgs e)
@@ -312,6 +311,13 @@ public partial class MainWindow : Window
             UpdateNotifyIconText();
             RefreshClipLibrary();
             UpdateEditorControlState();
+
+            await CheckForUpdatesAsync(isManual: false, installWhenAvailable: true);
+
+            if (_isExitRequested)
+            {
+                return;
+            }
 
             if (config.StartCaptureOnStartup)
             {
@@ -534,7 +540,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CheckForUpdatesAsync(bool isManual)
+    private async Task CheckForUpdatesAsync(bool isManual, bool installWhenAvailable)
     {
         if (_viewModel.IsCheckingForUpdates)
         {
@@ -556,6 +562,13 @@ public partial class MainWindow : Window
             {
                 ShowUpdateAvailableNotification(result.Release);
             }
+
+            if (result.IsUpdateAvailable && result.Release is not null && installWhenAvailable)
+            {
+                _viewModel.IsCheckingForUpdates = false;
+                await InstallReleaseUpdateAsync(result.Release, isAutomatic: true);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -570,16 +583,27 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task InstallUpdateAsync()
+    private async Task InstallPendingUpdateAsync(bool isAutomatic)
     {
-        if (_pendingUpdate is null || _viewModel.IsCheckingForUpdates)
+        if (_pendingUpdate is null)
         {
             return;
         }
 
-        var release = _pendingUpdate;
+        await InstallReleaseUpdateAsync(_pendingUpdate, isAutomatic);
+    }
+
+    private async Task InstallReleaseUpdateAsync(GitHubUpdateRelease release, bool isAutomatic)
+    {
+        if (_viewModel.IsCheckingForUpdates)
+        {
+            return;
+        }
+
         _viewModel.IsCheckingForUpdates = true;
-        _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub...";
+        _viewModel.UpdateStatusText = isAutomatic
+            ? $"Update v{release.VersionText} found on GitHub. Installing automatically..."
+            : $"Downloading v{release.VersionText} from GitHub...";
 
         try
         {
@@ -604,7 +628,9 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            _viewModel.UpdateStatusText = $"Update install failed: {ex.Message}";
+            _viewModel.UpdateStatusText = isAutomatic
+                ? $"Automatic update failed: {ex.Message}"
+                : $"Update install failed: {ex.Message}";
         }
         finally
         {
@@ -2228,7 +2254,7 @@ public partial class MainWindow : Window
     {
         var contextMenu = new Forms.ContextMenuStrip();
         contextMenu.Items.Add("Open DualClip", null, (_, _) => RestoreFromTray());
-        contextMenu.Items.Add("Check for Updates", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => _ = CheckForUpdatesAsync(isManual: true))));
+        contextMenu.Items.Add("Check for Updates", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => _ = CheckForUpdatesAsync(isManual: true, installWhenAvailable: false))));
         contextMenu.Items.Add("Exit", null, (_, _) => ExitApplication());
 
         var notifyIcon = new Forms.NotifyIcon
