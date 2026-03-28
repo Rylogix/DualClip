@@ -16,6 +16,7 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     private readonly FfmpegClipAssembler _clipAssembler = new();
     private readonly FfmpegSegmentWriter _segmentWriter = new();
     private readonly RollingSegmentBuffer _segmentBuffer;
+    private readonly CancellationTokenSource _disposeCts = new();
     private readonly SemaphoreSlim _saveLock = new(1, 1);
     private readonly object _textureLock = new();
     private readonly IDirect3DDevice _winrtDevice;
@@ -33,6 +34,7 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     private Task? _encodeLoopTask;
     private SizeInt32 _captureSize;
     private readonly bool _preferBorderlessCapture;
+    private int _disposeState;
 
     public MonitorCaptureSession(MonitorCaptureSessionOptions options)
     {
@@ -186,12 +188,26 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
         double clipAudioVolumePercent = 100d,
         CancellationToken cancellationToken = default)
     {
+        if (Volatile.Read(ref _disposeState) != 0 || _disposeCts.IsCancellationRequested)
+        {
+            throw new InvalidOperationException($"Cannot save a clip for {Options.SlotName} while the capture session is stopping.");
+        }
+
         Directory.CreateDirectory(outputDirectory);
 
-        await _saveLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        var saveLockHeld = false;
 
         try
         {
+            await _saveLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+            saveLockHeld = true;
+
+            if (_disposeCts.IsCancellationRequested)
+            {
+                throw new InvalidOperationException($"Cannot save a clip for {Options.SlotName} while the capture session is stopping.");
+            }
+
             var segments = _segmentBuffer.GetRecentStableSegments(Options.ReplayLengthSeconds);
 
             if (segments.Count == 0)
@@ -212,19 +228,40 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
                 outputPath,
                 cancellationToken).ConfigureAwait(false);
         }
+        catch (OperationCanceledException ex) when (_disposeCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException($"Cannot save a clip for {Options.SlotName} while the capture session is stopping.", ex);
+        }
         finally
         {
-            _saveLock.Release();
+            if (saveLockHeld)
+            {
+                _saveLock.Release();
+            }
         }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposeState, 1) != 0)
+        {
+            return;
+        }
+
+        _disposeCts.Cancel();
         await StopAsync().ConfigureAwait(false);
+        await WaitForPendingSavesAsync().ConfigureAwait(false);
+        _disposeCts.Dispose();
         _saveLock.Dispose();
         _multithread.Dispose();
         _d3dDevice.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    private async Task WaitForPendingSavesAsync()
+    {
+        await _saveLock.WaitAsync().ConfigureAwait(false);
+        _saveLock.Release();
     }
 
     private async Task EncodeLoopAsync(CancellationToken cancellationToken)

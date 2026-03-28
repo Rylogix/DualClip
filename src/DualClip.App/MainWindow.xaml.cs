@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private const double MinimumCropSizePixels = 32d;
     private const double PreviewPlaybackSegmentEndToleranceSeconds = 0.03d;
     private const int AudioAlignmentContextSeconds = 12;
+    private static readonly TimeSpan ClipSaveCooldown = TimeSpan.FromSeconds(3);
 
     private readonly JsonAppConfigStore _configStore = new();
     private readonly GitHubReleaseUpdateService _updateService = new();
@@ -37,7 +38,9 @@ public partial class MainWindow : Window
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly DispatcherTimer _previewTimer;
     private readonly Dictionary<string, MonitorCaptureSession> _monitorSessionsByNodeId = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DateTimeOffset> _nextClipAllowedAtByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
+    private readonly object _clipCooldownLock = new();
     private readonly MediaElement _previewMediaElement;
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
@@ -488,17 +491,33 @@ public partial class MainWindow : Window
 
         _viewModel.IsCapturing = false;
         _viewModel.AppStatus = string.Empty;
+        lock (_clipCooldownLock)
+        {
+            _nextClipAllowedAtByNodeId.Clear();
+        }
         UpdateNotifyIconText();
     }
 
     private async Task<string?> SaveMonitorNodeClipAsync(
         MonitorNodeViewModel node,
         IReadOnlyList<string>? audioSegments = null,
-        bool refreshClipLibrary = true)
+        bool refreshClipLibrary = true,
+        bool playQueuedSound = false)
     {
         if (!_monitorSessionsByNodeId.TryGetValue(node.Id, out var monitorSession))
         {
             return null;
+        }
+
+        if (!TryReserveClipCooldown(node, out var remainingCooldown))
+        {
+            node.Status = BuildClipCooldownStatus(node, remainingCooldown);
+            return null;
+        }
+
+        if (playQueuedSound)
+        {
+            ClipSoundPlayer.PlayQueued();
         }
 
         node.Status = $"Saving {node.DisplayTitle} clip...";
@@ -899,8 +918,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ClipSoundPlayer.PlayQueued();
-        await SaveMonitorNodeClipAsync(node);
+        await SaveMonitorNodeClipAsync(node, playQueuedSound: true);
     }
 
     private void HotkeyCaptureTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -2294,6 +2312,32 @@ public partial class MainWindow : Window
         return string.IsNullOrWhiteSpace(sanitizedName)
             ? $"Monitor_{node.Id[..Math.Min(6, node.Id.Length)]}"
             : sanitizedName;
+    }
+
+    private bool TryReserveClipCooldown(MonitorNodeViewModel node, out TimeSpan remainingCooldown)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        lock (_clipCooldownLock)
+        {
+            if (_nextClipAllowedAtByNodeId.TryGetValue(node.Id, out var nextAllowedAt)
+                && nextAllowedAt > now)
+            {
+                remainingCooldown = nextAllowedAt - now;
+                return false;
+            }
+
+            _nextClipAllowedAtByNodeId[node.Id] = now.Add(ClipSaveCooldown);
+        }
+
+        remainingCooldown = TimeSpan.Zero;
+        return true;
+    }
+
+    private static string BuildClipCooldownStatus(MonitorNodeViewModel node, TimeSpan remainingCooldown)
+    {
+        var remainingSeconds = Math.Max(1, (int)Math.Ceiling(remainingCooldown.TotalSeconds));
+        return $"{node.DisplayTitle} is on cooldown. Wait {remainingSeconds}s before clipping again.";
     }
 
     private IReadOnlyList<string> GetAudioSegments(int replayLengthSeconds)
