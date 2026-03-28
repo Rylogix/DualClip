@@ -633,6 +633,14 @@ public partial class MainWindow : Window
 
             if (result.IsUpdateAvailable && result.Release is not null && installWhenAvailable)
             {
+                if (HasStagedUpdate(result.Release))
+                {
+                    StartupDiagnostics.Write($"Automatic install skipped for v{result.Release.VersionText} because a staged update already exists.");
+                    _viewModel.UpdateStatusText =
+                        $"Update v{result.Release.VersionText} was already downloaded. Automatic install is paused to avoid a restart loop. Use Install Update to retry manually.";
+                    return;
+                }
+
                 _viewModel.IsCheckingForUpdates = false;
                 await InstallReleaseUpdateAsync(result.Release, isAutomatic: true);
                 return;
@@ -716,6 +724,14 @@ public partial class MainWindow : Window
         _viewModel.InstallUpdateButtonText = release is null
             ? "Install Update"
             : $"Install v{release.VersionText}";
+    }
+
+    private static bool HasStagedUpdate(GitHubUpdateRelease release)
+    {
+        var updateDirectory = AppPaths.GetUpdateDirectory(release.VersionText);
+
+        return Directory.Exists(updateDirectory)
+            && Directory.EnumerateFileSystemEntries(updateDirectory, "*", SearchOption.AllDirectories).Any();
     }
 
     private void ShowUpdateAvailableNotification(GitHubUpdateRelease release)
