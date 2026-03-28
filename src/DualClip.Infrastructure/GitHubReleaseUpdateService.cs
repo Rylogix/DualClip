@@ -143,6 +143,37 @@ public sealed class GitHubReleaseUpdateService
         }
     }
 
+    public GitHubPreparedUpdate? TryGetPreparedUpdate(GitHubUpdateRelease release)
+    {
+        ArgumentNullException.ThrowIfNull(release);
+
+        var updateDirectory = AppPaths.GetUpdateDirectory(release.VersionText);
+
+        if (!Directory.Exists(updateDirectory))
+        {
+            return null;
+        }
+
+        var stagedDirectory = Directory
+            .EnumerateDirectories(updateDirectory, "*", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(path =>
+            {
+                var assetPath = Path.Combine(path, release.AssetName);
+                return File.Exists(assetPath) && new FileInfo(assetPath).Length > 0;
+            });
+
+        if (string.IsNullOrWhiteSpace(stagedDirectory))
+        {
+            return null;
+        }
+
+        return new GitHubPreparedUpdate(
+            release,
+            stagedDirectory,
+            Path.Combine(stagedDirectory, release.AssetName));
+    }
+
     public void LaunchUpdaterAndRestart(GitHubPreparedUpdate preparedUpdate)
     {
         ArgumentNullException.ThrowIfNull(preparedUpdate);
@@ -152,16 +183,13 @@ public sealed class GitHubReleaseUpdateService
         var scriptPath = Path.Combine(preparedUpdate.StagingDirectory, "apply-update.cmd");
         File.WriteAllText(scriptPath, BuildUpdateScript(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var commandText =
-            $"\"{scriptPath}\" \"{CurrentExecutablePath}\" \"{preparedUpdate.DownloadedAssetPath}\" \"{backupPath}\" {Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}";
-
         var startInfo = new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = $"/d /c {commandText}",
+            FileName = scriptPath,
+            Arguments =
+                $"\"{CurrentExecutablePath}\" \"{preparedUpdate.DownloadedAssetPath}\" \"{backupPath}\" {Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}",
             WorkingDirectory = preparedUpdate.StagingDirectory,
-            CreateNoWindow = true,
-            UseShellExecute = false,
+            UseShellExecute = true,
             WindowStyle = ProcessWindowStyle.Hidden,
         };
 
@@ -471,10 +499,13 @@ set "CURRENT_EXE=%~1"
 set "NEW_EXE=%~2"
 set "BACKUP_EXE=%~3"
 set "PROCESS_ID=%~4"
+set "LOG_PATH=%LOCALAPPDATA%\DualClip\update-helper.log"
 
 if "%CURRENT_EXE%"=="" exit /b 1
 if "%NEW_EXE%"=="" exit /b 1
 if "%PROCESS_ID%"=="" exit /b 1
+
+>>"%LOG_PATH%" echo [%date% %time%] Starting updater for "%CURRENT_EXE%" using "%NEW_EXE%" waiting on PID %PROCESS_ID%
 
 :wait_for_exit
 tasklist /FI "PID eq %PROCESS_ID%" 2>nul | find "%PROCESS_ID%" >nul
@@ -483,15 +514,22 @@ if not errorlevel 1 (
     goto wait_for_exit
 )
 
+>>"%LOG_PATH%" echo [%date% %time%] PID %PROCESS_ID% exited. Applying update.
 copy /Y "%CURRENT_EXE%" "%BACKUP_EXE%" >nul 2>nul
 copy /Y "%NEW_EXE%" "%CURRENT_EXE%" >nul
 if errorlevel 1 goto failure
 
 start "" "%CURRENT_EXE%"
+if errorlevel 1 goto failure
+>>"%LOG_PATH%" echo [%date% %time%] Relaunched "%CURRENT_EXE%" successfully.
 exit /b 0
 
 :failure
-if exist "%BACKUP_EXE%" start "" "%BACKUP_EXE%"
+>>"%LOG_PATH%" echo [%date% %time%] Update apply failed. Attempting backup launch.
+if exist "%BACKUP_EXE%" (
+    start "" "%BACKUP_EXE%"
+    >>"%LOG_PATH%" echo [%date% %time%] Backup launch requested for "%BACKUP_EXE%".
+)
 exit /b 1
 """;
     }

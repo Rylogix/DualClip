@@ -633,14 +633,6 @@ public partial class MainWindow : Window
 
             if (result.IsUpdateAvailable && result.Release is not null && installWhenAvailable)
             {
-                if (HasStagedUpdate(result.Release))
-                {
-                    StartupDiagnostics.Write($"Automatic install skipped for v{result.Release.VersionText} because a staged update already exists.");
-                    _viewModel.UpdateStatusText =
-                        $"Update v{result.Release.VersionText} was already downloaded. Automatic install is paused to avoid a restart loop. Use Install Update to retry manually.";
-                    return;
-                }
-
                 _viewModel.IsCheckingForUpdates = false;
                 await InstallReleaseUpdateAsync(result.Release, isAutomatic: true);
                 return;
@@ -683,24 +675,26 @@ public partial class MainWindow : Window
 
         try
         {
-            var progress = new Progress<double>(value =>
-            {
-                _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub... {value:P0}";
-            });
+            var preparedUpdate = _updateService.TryGetPreparedUpdate(release);
 
-            var preparedUpdate = await _updateService.DownloadUpdateAsync(release, progress);
-            _viewModel.UpdateStatusText = $"Installing v{release.VersionText} and restarting DualClip...";
-
-            if (_viewModel.IsCapturing)
+            if (preparedUpdate is not null)
             {
-                _viewModel.AppStatus = "Stopping capture for update...";
-                UpdateNotifyIconText();
-                await StopCaptureAsync();
+                StartupDiagnostics.Write($"Reusing staged update v{release.VersionText} from '{preparedUpdate.DownloadedAssetPath}'.");
+                _viewModel.UpdateStatusText = isAutomatic
+                    ? $"Installing previously downloaded v{release.VersionText} and restarting DualClip..."
+                    : $"Installing previously downloaded v{release.VersionText}...";
+            }
+            else
+            {
+                var progress = new Progress<double>(value =>
+                {
+                    _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub... {value:P0}";
+                });
+
+                preparedUpdate = await _updateService.DownloadUpdateAsync(release, progress);
             }
 
-            _updateService.LaunchUpdaterAndRestart(preparedUpdate);
-            _isExitRequested = true;
-            Close();
+            await RestartForPreparedUpdateAsync(preparedUpdate);
         }
         catch (Exception ex)
         {
@@ -726,12 +720,21 @@ public partial class MainWindow : Window
             : $"Install v{release.VersionText}";
     }
 
-    private static bool HasStagedUpdate(GitHubUpdateRelease release)
+    private async Task RestartForPreparedUpdateAsync(GitHubPreparedUpdate preparedUpdate)
     {
-        var updateDirectory = AppPaths.GetUpdateDirectory(release.VersionText);
+        _viewModel.UpdateStatusText = $"Installing v{preparedUpdate.Release.VersionText} and restarting DualClip...";
 
-        return Directory.Exists(updateDirectory)
-            && Directory.EnumerateFileSystemEntries(updateDirectory, "*", SearchOption.AllDirectories).Any();
+        if (_viewModel.IsCapturing)
+        {
+            _viewModel.AppStatus = "Stopping capture for update...";
+            UpdateNotifyIconText();
+            await StopCaptureAsync();
+        }
+
+        StartupDiagnostics.Write($"Launching updater helper for v{preparedUpdate.Release.VersionText} from '{preparedUpdate.DownloadedAssetPath}'.");
+        _updateService.LaunchUpdaterAndRestart(preparedUpdate);
+        _isExitRequested = true;
+        System.Windows.Application.Current.Shutdown();
     }
 
     private void ShowUpdateAvailableNotification(GitHubUpdateRelease release)
