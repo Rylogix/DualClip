@@ -12,7 +12,9 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        StartupDiagnostics.Write("App.OnStartup entered.");
         base.OnStartup(e);
+        StartupDiagnostics.Write("App.OnStartup after base.");
 
         var createdNew = false;
 
@@ -27,11 +29,13 @@ public partial class App : System.Windows.Application
 
         if (!createdNew)
         {
+            StartupDiagnostics.Write("Another instance detected. Signalling restore and shutting down.");
             SignalExistingInstanceToRestore();
             Shutdown();
             return;
         }
 
+        StartupDiagnostics.Write("Single-instance mutex acquired.");
         _restoreWindowEvent = new EventWaitHandle(false, EventResetMode.AutoReset, RestoreWindowEventName);
         _restoreWindowRegistration = ThreadPool.RegisterWaitForSingleObject(
             _restoreWindowEvent,
@@ -54,13 +58,17 @@ public partial class App : System.Windows.Application
             Timeout.Infinite,
             executeOnlyOnce: false);
 
+        StartupDiagnostics.Write("Creating MainWindow.");
         var mainWindow = new MainWindow();
+        StartupDiagnostics.Write("MainWindow constructed.");
         MainWindow = mainWindow;
         mainWindow.Show();
+        StartupDiagnostics.Write("MainWindow shown.");
     }
 
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
+        StartupDiagnostics.Write("App.OnExit entered.");
         _restoreWindowRegistration?.Unregister(null);
         _restoreWindowRegistration = null;
 
@@ -82,6 +90,7 @@ public partial class App : System.Windows.Application
         }
 
         base.OnExit(e);
+        StartupDiagnostics.Write("App.OnExit completed.");
     }
 
     private static void SignalExistingInstanceToRestore()

@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _previewTimer;
     private readonly Dictionary<string, MonitorCaptureSession> _monitorSessionsByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
+    private readonly MediaElement _previewMediaElement;
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
     private bool _hasShownTrayTip;
@@ -68,11 +69,18 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        StartupDiagnostics.Write("MainWindow ctor entered.");
         InitializeComponent();
+        StartupDiagnostics.Write("MainWindow InitializeComponent completed.");
+        _previewMediaElement = CreatePreviewMediaElement();
+        PreviewMediaHost.Children.Add(_previewMediaElement);
+        StartupDiagnostics.Write("MainWindow preview media element created.");
         DataContext = _viewModel;
         _viewModel.CurrentVersionText = $"Current version: v{_updateService.CurrentVersionText}";
         PreviewMediaElement.SpeedRatio = 1.0d;
+        StartupDiagnostics.Write("MainWindow creating notify icon.");
         _notifyIcon = CreateNotifyIcon();
+        StartupDiagnostics.Write("MainWindow notify icon created.");
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged += MonitorNodes_CollectionChanged;
         _previewTimer = new DispatcherTimer
@@ -82,11 +90,16 @@ public partial class MainWindow : Window
         _previewTimer.Tick += PreviewTimer_Tick;
         UpdateWindowFrameState();
         UpdateEditorControlState();
+        StartupDiagnostics.Write("MainWindow ctor completed.");
     }
+
+    private MediaElement PreviewMediaElement => _previewMediaElement;
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        StartupDiagnostics.Write("Window_Loaded entered.");
         await LoadStateAsync();
+        StartupDiagnostics.Write("Window_Loaded completed.");
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -174,6 +187,22 @@ public partial class MainWindow : Window
         _notifyIcon.Dispose();
 
         base.OnClosed(e);
+    }
+
+    private MediaElement CreatePreviewMediaElement()
+    {
+        var mediaElement = new MediaElement
+        {
+            LoadedBehavior = MediaState.Manual,
+            UnloadedBehavior = MediaState.Manual,
+            ScrubbingEnabled = true,
+            Stretch = System.Windows.Media.Stretch.Uniform,
+        };
+
+        mediaElement.MediaOpened += PreviewMediaElement_MediaOpened;
+        mediaElement.MediaFailed += PreviewMediaElement_MediaFailed;
+        mediaElement.MediaEnded += PreviewMediaElement_MediaEnded;
+        return mediaElement;
     }
 
     private void ToggleWindowMaximized()
@@ -299,11 +328,15 @@ public partial class MainWindow : Window
 
     private async Task LoadStateAsync()
     {
+        StartupDiagnostics.Write("LoadStateAsync entered.");
         try
         {
             var config = await _configStore.LoadAsync();
+            StartupDiagnostics.Write($"LoadStateAsync loaded config. StartCaptureOnStartup={config.StartCaptureOnStartup}, StartInBackgroundOnStartup={config.StartInBackgroundOnStartup}.");
             var monitors = _monitorService.GetMonitors();
+            StartupDiagnostics.Write($"LoadStateAsync enumerated {monitors.Count} monitor(s).");
             var microphones = _audioDeviceService.GetMicrophones();
+            StartupDiagnostics.Write($"LoadStateAsync enumerated {microphones.Count} microphone(s).");
 
             _viewModel.ApplyConfig(config, monitors, microphones);
             _viewModel.AppStatus = "Ready to capture.";
@@ -312,15 +345,19 @@ public partial class MainWindow : Window
             RefreshClipLibrary();
             UpdateEditorControlState();
 
+            StartupDiagnostics.Write("LoadStateAsync checking for updates.");
             await CheckForUpdatesAsync(isManual: false, installWhenAvailable: true);
+            StartupDiagnostics.Write("LoadStateAsync finished update check.");
 
             if (_isExitRequested)
             {
+                StartupDiagnostics.Write("LoadStateAsync detected exit requested after update check.");
                 return;
             }
 
             if (config.StartCaptureOnStartup)
             {
+                StartupDiagnostics.Write("LoadStateAsync auto-start capture beginning.");
                 if (monitors.Count == 0)
                 {
                     _viewModel.AppStatus = "Auto-start skipped.";
@@ -329,6 +366,7 @@ public partial class MainWindow : Window
                 else
                 {
                     await StartCaptureAsync();
+                    StartupDiagnostics.Write($"LoadStateAsync auto-start capture completed. IsCapturing={_viewModel.IsCapturing}.");
 
                     if (_viewModel.IsCapturing && config.StartInBackgroundOnStartup)
                     {
@@ -343,6 +381,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            StartupDiagnostics.Write($"LoadStateAsync failed: {ex}");
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Failed to load initial state.";
             UpdateNotifyIconText();
@@ -351,13 +390,17 @@ public partial class MainWindow : Window
 
     private async Task StartCaptureAsync()
     {
+        StartupDiagnostics.Write("StartCaptureAsync entered.");
         _viewModel.ErrorMessage = string.Empty;
 
         try
         {
             var borderlessCaptureAllowed = await BorderlessCaptureAccessService.RequestAsync();
+            StartupDiagnostics.Write($"StartCaptureAsync borderless access result: {borderlessCaptureAllowed}.");
             var config = BuildValidatedConfig();
+            StartupDiagnostics.Write("StartCaptureAsync validated config.");
             await _configStore.SaveAsync(config);
+            StartupDiagnostics.Write("StartCaptureAsync saved config.");
             foreach (var node in _viewModel.MonitorNodes)
             {
                 Directory.CreateDirectory(node.OutputFolder);
@@ -374,14 +417,17 @@ public partial class MainWindow : Window
             try
             {
                 await audioSession.StartAsync();
+                StartupDiagnostics.Write("StartCaptureAsync audio session started.");
 
                 foreach (var monitorSession in monitorSessions)
                 {
                     SubscribeMonitorStatus(monitorSession.Session, monitorSession.Node);
                     await monitorSession.Session.StartAsync();
+                    StartupDiagnostics.Write($"StartCaptureAsync monitor session started for {monitorSession.Node.DisplayTitle}.");
                 }
 
                 RegisterHotkeys(config);
+                StartupDiagnostics.Write("StartCaptureAsync hotkeys registered.");
             }
             catch
             {
@@ -408,9 +454,11 @@ public partial class MainWindow : Window
             _viewModel.IsCapturing = true;
             _viewModel.AppStatus = string.Empty;
             UpdateNotifyIconText();
+            StartupDiagnostics.Write("StartCaptureAsync completed successfully.");
         }
         catch (Exception ex)
         {
+            StartupDiagnostics.Write($"StartCaptureAsync failed: {ex}");
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Capture did not start.";
             UpdateNotifyIconText();
@@ -1177,7 +1225,7 @@ public partial class MainWindow : Window
             }));
     }
 
-    private void PreviewMediaElement_MediaFailed(object sender, ExceptionRoutedEventArgs e)
+    private void PreviewMediaElement_MediaFailed(object? sender, ExceptionRoutedEventArgs e)
     {
         var selectedClip = GetSelectedClip();
         var clipName = selectedClip is null ? "the selected clip" : Path.GetFileName(selectedClip.FilePath);
