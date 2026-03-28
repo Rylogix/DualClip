@@ -915,11 +915,6 @@
                                 <CheckBox VerticalAlignment="Center"
                                           IsChecked="{Binding StartCaptureOnStartup}"
                                           Content="Start clipping on startup" />
-                                <CheckBox Margin="0,8,0,0"
-                                          VerticalAlignment="Center"
-                                          IsChecked="{Binding StartInBackgroundOnStartup}"
-                                          IsEnabled="{Binding StartCaptureOnStartup}"
-                                          Content="Start in background (tray)" />
                             </StackPanel>
                             <Border Margin="0,12,0,0"
                                     Padding="12"

@@ -335,7 +335,7 @@ public partial class MainWindow : Window
         try
         {
             var config = await _configStore.LoadAsync();
-            StartupDiagnostics.Write($"LoadStateAsync loaded config. StartCaptureOnStartup={config.StartCaptureOnStartup}, StartInBackgroundOnStartup={config.StartInBackgroundOnStartup}.");
+            StartupDiagnostics.Write($"LoadStateAsync loaded config. StartCaptureOnStartup={config.StartCaptureOnStartup}.");
             var monitors = _monitorService.GetMonitors();
             StartupDiagnostics.Write($"LoadStateAsync enumerated {monitors.Count} monitor(s).");
             var microphones = _audioDeviceService.GetMicrophones();
@@ -370,11 +370,6 @@ public partial class MainWindow : Window
                 {
                     await StartCaptureAsync();
                     StartupDiagnostics.Write($"LoadStateAsync auto-start capture completed. IsCapturing={_viewModel.IsCapturing}.");
-
-                    if (_viewModel.IsCapturing && config.StartInBackgroundOnStartup)
-                    {
-                        HideToTray();
-                    }
                 }
             }
             else if (monitors.Count == 0)
@@ -825,7 +820,6 @@ public partial class MainWindow : Window
             OutputFolderB = monitorNodeConfigs.ElementAtOrDefault(1)?.OutputFolder ?? monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
             UseUnifiedOutputFolder = false,
             StartCaptureOnStartup = _viewModel.StartCaptureOnStartup,
-            StartInBackgroundOnStartup = _viewModel.StartInBackgroundOnStartup,
             FfmpegPath = _viewModel.FfmpegPath,
             HotkeyA = monitorNodeConfigs.ElementAtOrDefault(0)?.Hotkey ?? HotkeyGesture.Disabled(),
             HotkeyB = monitorNodeConfigs.ElementAtOrDefault(1)?.Hotkey ?? HotkeyGesture.Disabled(),

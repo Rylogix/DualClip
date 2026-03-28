@@ -499,6 +499,7 @@ set "CURRENT_EXE=%~1"
 set "NEW_EXE=%~2"
 set "BACKUP_EXE=%~3"
 set "PROCESS_ID=%~4"
+set "TARGET_DIR=%~dp1"
 set "LOG_PATH=%LOCALAPPDATA%\DualClip\update-helper.log"
 
 if "%CURRENT_EXE%"=="" exit /b 1
@@ -519,9 +520,19 @@ copy /Y "%CURRENT_EXE%" "%BACKUP_EXE%" >nul 2>nul
 copy /Y "%NEW_EXE%" "%CURRENT_EXE%" >nul
 if errorlevel 1 goto failure
 
-start "" "%CURRENT_EXE%"
-if errorlevel 1 goto failure
->>"%LOG_PATH%" echo [%date% %time%] Relaunched "%CURRENT_EXE%" successfully.
+set /a START_ATTEMPT=0
+
+:retry_start
+set /a START_ATTEMPT+=1
+start "" /D "%TARGET_DIR%" "%CURRENT_EXE%"
+if not errorlevel 1 goto launch_success
+if %START_ATTEMPT% geq 3 goto failure
+>>"%LOG_PATH%" echo [%date% %time%] Relaunch attempt %START_ATTEMPT% failed. Retrying.
+timeout /t 1 /nobreak >nul
+goto retry_start
+
+:launch_success
+>>"%LOG_PATH%" echo [%date% %time%] Relaunched "%CURRENT_EXE%" successfully from "%TARGET_DIR%".
 exit /b 0
 
 :failure

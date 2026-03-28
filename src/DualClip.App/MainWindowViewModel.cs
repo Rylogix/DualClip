@@ -21,7 +21,6 @@ public sealed class MainWindowViewModel : BindableObject
     private string _installUpdateButtonText = "Install Update";
     private bool _isCapturing;
     private bool _startCaptureOnStartup;
-    private bool _startInBackgroundOnStartup;
     private bool _isSettingsTabSelected;
     private bool _isCheckingForUpdates;
     private bool _isUpdateAvailable;
@@ -108,12 +107,6 @@ public sealed class MainWindowViewModel : BindableObject
     {
         get => _startCaptureOnStartup;
         set => SetProperty(ref _startCaptureOnStartup, value);
-    }
-
-    public bool StartInBackgroundOnStartup
-    {
-        get => _startInBackgroundOnStartup;
-        set => SetProperty(ref _startInBackgroundOnStartup, value);
     }
 
     public string AppStatus
@@ -255,7 +248,6 @@ public sealed class MainWindowViewModel : BindableObject
         ReplayLengthSecondsText = config.ReplayLengthSeconds.ToString();
         FpsTargetText = config.FpsTarget.ToString();
         StartCaptureOnStartup = config.StartCaptureOnStartup;
-        StartInBackgroundOnStartup = config.StartInBackgroundOnStartup;
         FfmpegPath = config.FfmpegPath;
 
         var usedMonitorDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
