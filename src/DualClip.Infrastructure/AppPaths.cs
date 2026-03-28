@@ -28,9 +28,7 @@ public static class AppPaths
     {
         var candidates = new List<string>
         {
-            Path.Combine(Directory.GetCurrentDirectory(), "Tools", "ffmpeg.exe"),
             Path.Combine(AppContext.BaseDirectory, "Tools", "ffmpeg.exe"),
-            @"C:\Users\rylan\Downloads\RLXProjects\DualClip\Tools\ffmpeg.exe",
         };
 
         var current = new DirectoryInfo(AppContext.BaseDirectory);

@@ -20,7 +20,7 @@ public partial class MainWindow
     private const double TimelineSegmentTopPixels = 8d;
     private const double TimelineSegmentHeightPixels = 42d;
     private const double TimelineTrackTopPixels = 76d;
-    private const double TimelinePlayheadTopPixels = 52d;
+    private const double TimelinePlayheadTopPixels = 12d;
     private const double TimelineTrimThumbTopPixels = 64d;
 
     private TimelineSegment? _copiedSegmentSettings;

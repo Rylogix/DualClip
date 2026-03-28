@@ -515,6 +515,89 @@
             </Setter>
         </Style>
 
+        <Style x:Key="PageScrollBarTrackButtonStyle" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PageVerticalScrollBarThumbStyle" TargetType="Thumb">
+            <Setter Property="Width" Value="8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="ThumbBorder"
+                                Margin="0,2"
+                                Background="{StaticResource AccentMutedBrush}"
+                                BorderBrush="{StaticResource BorderBrushDark}"
+                                BorderThickness="1"
+                                CornerRadius="4" />
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ThumbBorder" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ThumbBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="ThumbBorder" Property="Background" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ThumbBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PageVerticalScrollBarStyle" TargetType="ScrollBar">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Background" Value="{StaticResource PanelAltBrush}" />
+            <Setter Property="Margin" Value="10,2,0,2" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Border Width="12"
+                                    HorizontalAlignment="Center"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{StaticResource BorderBrushDark}"
+                                    BorderThickness="1"
+                                    CornerRadius="6">
+                                <Track x:Name="PART_Track">
+                                    <Track.DecreaseRepeatButton>
+                                        <RepeatButton Command="ScrollBar.PageUpCommand"
+                                                      Style="{StaticResource PageScrollBarTrackButtonStyle}" />
+                                    </Track.DecreaseRepeatButton>
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource PageVerticalScrollBarThumbStyle}" />
+                                    </Track.Thumb>
+                                    <Track.IncreaseRepeatButton>
+                                        <RepeatButton Command="ScrollBar.PageDownCommand"
+                                                      Style="{StaticResource PageScrollBarTrackButtonStyle}" />
+                                    </Track.IncreaseRepeatButton>
+                                </Track>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="{StaticResource InputBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="TimelineScrollBarThumbStyle" TargetType="Thumb">
             <Setter Property="Height" Value="8" />
             <Setter Property="Template">
@@ -688,6 +771,168 @@
             </Setter>
         </Style>
 
+        <Style x:Key="SettingsToggleSwitchStyle" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource PanelAltBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,9" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border x:Name="ToggleShell"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="44" />
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter VerticalAlignment="Center"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  RecognizesAccessKey="True" />
+                                <Border x:Name="ToggleTrack"
+                                        Grid.Column="2"
+                                        Width="44"
+                                        Height="24"
+                                        Background="{StaticResource InputBrush}"
+                                        BorderBrush="{StaticResource BorderBrushDark}"
+                                        BorderThickness="1"
+                                        CornerRadius="12">
+                                    <Ellipse x:Name="ToggleThumb"
+                                             Width="14"
+                                             Height="14"
+                                             Margin="4,0,0,0"
+                                             HorizontalAlignment="Left"
+                                             VerticalAlignment="Center"
+                                             Fill="{StaticResource MutedTextBrush}" />
+                                </Border>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ToggleShell" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ToggleShell" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="ToggleShell" Property="Background" Value="{StaticResource SurfaceBrush}" />
+                                <Setter TargetName="ToggleShell" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ToggleTrack" Property="Background" Value="{StaticResource AccentMutedBrush}" />
+                                <Setter TargetName="ToggleTrack" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ToggleThumb" Property="HorizontalAlignment" Value="Right" />
+                                <Setter TargetName="ToggleThumb" Property="Margin" Value="0,0,4,0" />
+                                <Setter TargetName="ToggleThumb" Property="Fill" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ToggleShell" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SettingsCardExpanderStyle" TargetType="Expander">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource InputBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDark}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <Border x:Name="ExpanderBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10"
+                                Padding="{TemplateBinding Padding}">
+                            <StackPanel>
+                                <ToggleButton x:Name="ExpanderToggleButton"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              Content="{TemplateBinding Header}"
+                                              Focusable="False"
+                                              IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="18" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Path x:Name="ExpanderChevron"
+                                                      Width="10"
+                                                      Height="6"
+                                                      Margin="0,0,8,0"
+                                                      VerticalAlignment="Center"
+                                                      Fill="{StaticResource MutedTextBrush}"
+                                                      Data="M 0 0 L 10 0 L 5 6 Z"
+                                                      RenderTransformOrigin="0.5,0.5">
+                                                    <Path.RenderTransform>
+                                                        <RotateTransform Angle="-90" />
+                                                    </Path.RenderTransform>
+                                                </Path>
+                                                <ContentPresenter Grid.Column="1"
+                                                                  VerticalAlignment="Center"
+                                                                  RecognizesAccessKey="True" />
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ExpanderChevron" Property="Fill" Value="{StaticResource AccentBrush}" />
+                                                </Trigger>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="ExpanderChevron" Property="RenderTransform">
+                                                        <Setter.Value>
+                                                            <RotateTransform Angle="0" />
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                    <Setter TargetName="ExpanderChevron" Property="Fill" Value="{StaticResource AccentBrush}" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <ContentPresenter x:Name="ExpanderContent"
+                                                  ContentSource="Content"
+                                                  Margin="0,10,0,0"
+                                                  Visibility="Collapsed" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ExpanderBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ExpanderBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="ExpanderContent" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="ExpanderBorder" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="InspectorLabelStyle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
             <Setter Property="FontSize" Value="11" />
@@ -744,6 +989,12 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="TitleBarIconButtonStyle" TargetType="Button" BasedOn="{StaticResource WindowChromeButtonStyle}">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="10,0,0,0" />
+        </Style>
     </Window.Resources>
     <Border x:Name="WindowFrameBorder"
             Background="{StaticResource WindowBrush}"
@@ -777,20 +1028,37 @@
                     <StackPanel Grid.Column="0"
                                 Margin="8,0,0,0"
                                 Orientation="Horizontal"
-                                VerticalAlignment="Center"
-                                IsHitTestVisible="False">
-                        <Border Width="22"
-                                Height="22"
-                                Padding="3"
-                                Background="{StaticResource AccentMutedBrush}"
-                                CornerRadius="7">
-                            <Image Source="Assets/DualClipLogo.png" Stretch="Uniform" />
-                        </Border>
-                        <TextBlock Margin="10,0,0,0"
-                                   VerticalAlignment="Center"
-                                   FontSize="13"
-                                   FontWeight="SemiBold"
-                                   Text="DualClip" />
+                                VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal"
+                                    VerticalAlignment="Center"
+                                    IsHitTestVisible="False">
+                            <Border Width="22"
+                                    Height="22"
+                                    Padding="3"
+                                    Background="{StaticResource AccentMutedBrush}"
+                                    CornerRadius="7">
+                                <Image Source="Assets/DualClipLogo.png" Stretch="Uniform" />
+                            </Border>
+                            <TextBlock Margin="10,0,0,0"
+                                       Height="22"
+                                       VerticalAlignment="Center"
+                                       FontSize="16"
+                                       FontWeight="SemiBold"
+                                       LineHeight="22"
+                                       LineStackingStrategy="BlockLineHeight"
+                                       Text="DualClip" />
+                        </StackPanel>
+                        <Button Style="{StaticResource TitleBarIconButtonStyle}"
+                                Click="OpenDiscordButton_Click"
+                                ToolTip="Join Discord">
+                            <Viewbox Width="16" Height="16">
+                                <Grid Width="24" Height="24">
+                                    <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                          Stretch="Fill"
+                                          Data="M12,2.2C8.58,2.2 5.79,3.94 4.22,6.77C3.2,8.6 2.75,10.67 2.84,12.76C2.96,15.59 4.03,18.03 6.02,19.96L6.28,20.2L9.09,18.47L8.42,17.99C7.49,17.33 6.76,16.5 6.26,15.5C7.12,16.13 8.07,16.58 9.08,16.83C10.03,17.06 11.01,17.18 12,17.18C12.99,17.18 13.97,17.06 14.92,16.83C15.93,16.58 16.88,16.13 17.74,15.5C17.24,16.5 16.51,17.33 15.58,17.99L14.91,18.47L17.72,20.2L17.98,19.96C19.97,18.03 21.04,15.59 21.16,12.76C21.25,10.67 20.8,8.6 19.78,6.77C18.21,3.94 15.42,2.2 12,2.2ZM9.46,13.92C8.54,13.92 7.8,13.07 7.8,12.01C7.8,10.95 8.54,10.1 9.46,10.1C10.37,10.1 11.12,10.95 11.12,12.01C11.12,13.07 10.37,13.92 9.46,13.92ZM14.54,13.92C13.63,13.92 12.88,13.07 12.88,12.01C12.88,10.95 13.63,10.1 14.54,10.1C15.46,10.1 16.2,10.95 16.2,12.01C16.2,13.07 15.46,13.92 14.54,13.92Z" />
+                                </Grid>
+                            </Viewbox>
+                        </Button>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2"
@@ -824,6 +1092,9 @@
                           HorizontalScrollBarVisibility="Disabled"
                           PanningMode="VerticalFirst"
                           CanContentScroll="False">
+                <ScrollViewer.Resources>
+                    <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource PageVerticalScrollBarStyle}" />
+                </ScrollViewer.Resources>
                 <Grid Margin="18,14,18,18">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -1080,11 +1351,14 @@
                         <ComboBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding Microphones}" SelectedItem="{Binding SelectedMicrophone}" />
 
                         <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2">
-                            <StackPanel>
-                                <CheckBox VerticalAlignment="Center"
-                                          IsChecked="{Binding StartCaptureOnStartup}"
-                                          Content="Start clipping on startup" />
-                            </StackPanel>
+                            <CheckBox VerticalAlignment="Center"
+                                      Style="{StaticResource SettingsToggleSwitchStyle}"
+                                      IsChecked="{Binding StartCaptureOnStartup}"
+                                      Content="Start clipping on startup" />
+                            <TextBlock Margin="2,8,0,0"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Text="Launch DualClip ready to begin clipping as soon as Windows starts it."
+                                       TextWrapping="Wrap" />
                             <Border Margin="0,12,0,0"
                                     Padding="12"
                                     Background="{StaticResource PanelAltBrush}"
@@ -1099,7 +1373,33 @@
                                     <TextBlock Margin="0,8,0,0"
                                                Text="{Binding UpdateStatusText}"
                                                TextWrapping="Wrap" />
+                                    <Expander Margin="0,12,0,0"
+                                              Header="{Binding UpdateNotesTitle}">
+                                        <Expander.Style>
+                                            <Style TargetType="Expander" BasedOn="{StaticResource SettingsCardExpanderStyle}">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasUpdateNotes}" Value="False">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Expander.Style>
+                                        <TextBlock Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="{Binding UpdateNotesText}"
+                                                   TextWrapping="Wrap" />
+                                    </Expander>
                                     <WrapPanel Margin="0,12,0,0">
+                                        <WrapPanel.Style>
+                                            <Style TargetType="WrapPanel">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShowsGitHubUpdateActions}" Value="False">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </WrapPanel.Style>
                                         <Button Margin="0,0,8,0"
                                                 Padding="12,4"
                                                 Click="CheckForUpdatesButton_Click"
@@ -1213,9 +1513,8 @@
                                      SelectionChanged="ClipListBox_SelectionChanged">
                                 <ListBox.ItemsPanel>
                                     <ItemsPanelTemplate>
-                                        <WrapPanel IsItemsHost="True"
-                                                   ItemWidth="155"
-                                                   ItemHeight="168" />
+                                        <UniformGrid IsItemsHost="True"
+                                                     Columns="2" />
                                     </ItemsPanelTemplate>
                                 </ListBox.ItemsPanel>
                                 <ListBox.ItemContainerStyle>
@@ -1223,7 +1522,7 @@
                                         <Setter Property="Background" Value="Transparent" />
                                         <Setter Property="BorderBrush" Value="Transparent" />
                                         <Setter Property="BorderThickness" Value="0" />
-                                        <Setter Property="Margin" Value="0,0,6,6" />
+                                        <Setter Property="Margin" Value="0,0,8,8" />
                                         <Setter Property="Padding" Value="0" />
                                         <Setter Property="VerticalContentAlignment" Value="Stretch" />
                                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -1252,15 +1551,20 @@
                                                 </Grid.RowDefinitions>
 
                                                 <Grid Grid.Row="0">
-                                                    <Border Margin="0"
+                                                    <Border Margin="1,1,1,0"
                                                             Background="{StaticResource InputBrush}"
-                                                            CornerRadius="12,12,0,0"
+                                                            CornerRadius="11,11,0,0"
                                                             ClipToBounds="True">
                                                         <Grid>
-                                                            <Image Source="{Binding ThumbnailPath}"
-                                                                   Stretch="UniformToFill" />
+                                                            <Border CornerRadius="11,11,0,0">
+                                                                <Border.Background>
+                                                                    <ImageBrush ImageSource="{Binding ThumbnailPath}"
+                                                                                Stretch="UniformToFill" />
+                                                                </Border.Background>
+                                                            </Border>
                                                             <Border x:Name="ClipPreviewFallback"
-                                                                    Background="#AA0B1016">
+                                                                    Background="#AA0B1016"
+                                                                    CornerRadius="11,11,0,0">
                                                                 <StackPanel HorizontalAlignment="Center"
                                                                             VerticalAlignment="Center">
                                                                     <TextBlock HorizontalAlignment="Center"
@@ -1410,7 +1714,7 @@
 
                                 <GroupBox Header="Crop" Margin="0,12,0,0" Padding="12" Visibility="Collapsed">
                                     <StackPanel>
-                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" Text="Drag the crop box in the preview. Use the corner or edge handles for precision." TextWrapping="Wrap" />
+                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" Text="Use the corner or edge handles in the preview to crop precisely." TextWrapping="Wrap" />
                                         <TextBlock x:Name="CropSummaryTextBlock" Margin="0,10,0,0" Text="Crop: full frame" />
                                         <Button x:Name="ResetCropButton" Margin="0,12,0,0" Style="{StaticResource GhostButtonStyle}" Click="ResetCropButton_Click" Content="Reset Crop" />
                                     </StackPanel>
@@ -1446,13 +1750,94 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Column="0"
-                                           Margin="0,0,12,0"
-                                           VerticalAlignment="Center"
-                                           FontSize="16"
-                                           FontWeight="SemiBold"
-                                           Text="{Binding Editor.SelectedClipTitle}"
-                                           TextTrimming="CharacterEllipsis" />
+                                <Grid Grid.Column="0"
+                                      Margin="0,0,12,0">
+                                    <TextBlock VerticalAlignment="Center"
+                                               FontSize="16"
+                                               FontWeight="SemiBold"
+                                               Text="{Binding Editor.SelectedClipTitle}"
+                                               TextTrimming="CharacterEllipsis">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Editor.SelectedClipTitle}" Value="No clip selected">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding ElementName=ClipListBox, Path=SelectedItem}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <Grid DataContext="{Binding ElementName=ClipListBox, Path=SelectedItem}">
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.Editor.SelectedClipTitle, RelativeSource={RelativeSource AncestorType=Window}}" Value="No clip selected">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Grid.Style>
+
+                                        <Button Click="RenameClipTitleButton_Click"
+                                                ToolTip="Rename clip">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource ClipTitleButtonStyle}">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <TextBlock VerticalAlignment="Center"
+                                                       FontSize="16"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis">
+                                                <Run Text="{Binding FileNameWithoutExtension, Mode=OneWay}" />
+                                                <Run Text="{Binding FileExtension, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </Button>
+
+                                        <DockPanel LastChildFill="False"
+                                                   VerticalAlignment="Center">
+                                            <DockPanel.Style>
+                                                <Style TargetType="DockPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </DockPanel.Style>
+                                            <TextBox MinWidth="120"
+                                                     Padding="4,2"
+                                                     VerticalContentAlignment="Center"
+                                                     FontSize="16"
+                                                     FontWeight="SemiBold"
+                                                     Text="{Binding EditableFileName, UpdateSourceTrigger=PropertyChanged}"
+                                                     Loaded="ClipTitleRenameTextBox_Loaded"
+                                                     LostFocus="ClipTitleRenameTextBox_LostFocus"
+                                                     PreviewKeyDown="ClipTitleRenameTextBox_PreviewKeyDown" />
+                                            <TextBlock Margin="6,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="16"
+                                                       FontWeight="SemiBold"
+                                                       Text="{Binding FileExtension, Mode=OneWay}" />
+                                        </DockPanel>
+                                    </Grid>
+                                </Grid>
 
                                 <WrapPanel Grid.Column="1" VerticalAlignment="Center">
                                     <Button x:Name="SaveEditedAsNewButton"
@@ -1503,10 +1888,11 @@
                                     <Grid x:Name="PreviewHost"
                                           Width="1280"
                                           Height="720"
+                                          Background="Black"
                                           ClipToBounds="True"
                                           SizeChanged="PreviewHost_SizeChanged">
                                         <Canvas x:Name="PreviewOverlayCanvas"
-                                                Background="#0B1016"
+                                                Background="Black"
                                                 IsHitTestVisible="True">
                                             <Border x:Name="PreviewVideoPresenter"
                                                     Background="Black"
@@ -1549,15 +1935,9 @@
                                                         BorderBrush="{StaticResource AccentBrush}"
                                                         BorderThickness="2"
                                                         Background="#16000000"
+                                                        IsHitTestVisible="False"
                                                         CornerRadius="6"
                                                         Visibility="Collapsed" />
-                                                <Thumb x:Name="CropMoveThumb"
-                                                       Width="0"
-                                                       Height="0"
-                                                       Style="{StaticResource CropMoveThumbStyle}"
-                                                       Visibility="Collapsed"
-                                                       DragStarted="EditorMutationThumb_DragStarted"
-                                                       DragDelta="CropMoveThumb_DragDelta" />
 
                                                 <Thumb x:Name="CropTopThumb"
                                                        Style="{StaticResource CropEdgeThumbStyle}"
@@ -1689,15 +2069,27 @@
                                             <Canvas x:Name="TimelineRulerCanvas" Grid.Row="0" Height="28" Background="Transparent" />
 
                                             <Grid Grid.Row="1">
-                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="110" Background="Transparent" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" />
-                                                <Canvas x:Name="TimelineCanvas" Height="110" Background="Transparent" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
+                                                <Canvas x:Name="TimelineCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="1" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
                                                     <Rectangle x:Name="TimelineTrackRectangle" RadiusX="5" RadiusY="5" Height="10" Fill="{StaticResource PanelAltBrush}" />
                                                     <Rectangle x:Name="TrimSelectionRectangle" RadiusX="6" RadiusY="6" Height="10" Fill="{StaticResource AccentMutedBrush}" />
-                                                    <Rectangle x:Name="PlayheadLine" Width="2" Height="70" Fill="{StaticResource AccentBrush}" />
-                                                    <Rectangle x:Name="TimelineDropIndicator" Width="3" Height="92" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" Visibility="Collapsed" />
-                                                    <Thumb x:Name="TrimStartThumb" Style="{StaticResource EditorHandleThumbStyle}" DragStarted="EditorMutationThumb_DragStarted" DragDelta="TrimStartThumb_DragDelta" />
-                                                    <Thumb x:Name="TrimEndThumb" Style="{StaticResource EditorHandleThumbStyle}" DragStarted="EditorMutationThumb_DragStarted" DragDelta="TrimEndThumb_DragDelta" />
-                                                    <Thumb x:Name="PlayheadThumb" Style="{StaticResource PlayheadThumbStyle}" DragDelta="PlayheadThumb_DragDelta" />
+                                                </Canvas>
+                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="2" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" />
+                                                <Canvas x:Name="TimelineOverlayCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="3" SizeChanged="TimelineCanvas_SizeChanged">
+                                                    <Rectangle x:Name="TimelineDropIndicator" Width="3" Height="92" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" Visibility="Collapsed" Panel.ZIndex="0" />
+                                                    <Rectangle x:Name="PlayheadLine" Width="2" Height="70" Fill="{StaticResource AccentBrush}" Panel.ZIndex="1" />
+                                                    <Thumb x:Name="TrimStartThumb"
+                                                           Style="{StaticResource EditorHandleThumbStyle}"
+                                                           DragDelta="TrimStartThumb_DragDelta"
+                                                           Visibility="Collapsed"
+                                                           IsHitTestVisible="False"
+                                                           Panel.ZIndex="1" />
+                                                    <Thumb x:Name="TrimEndThumb"
+                                                           Style="{StaticResource EditorHandleThumbStyle}"
+                                                           DragDelta="TrimEndThumb_DragDelta"
+                                                           Visibility="Collapsed"
+                                                           IsHitTestVisible="False"
+                                                           Panel.ZIndex="1" />
+                                                    <Thumb x:Name="PlayheadThumb" Style="{StaticResource PlayheadThumbStyle}" DragDelta="PlayheadThumb_DragDelta" Panel.ZIndex="2" />
                                                 </Canvas>
                                             </Grid>
                                         </Grid>

@@ -23,13 +23,16 @@ public sealed class MainWindowViewModel : BindableObject
     private string _editorStatus = "No clip selected.";
     private string _errorMessage = string.Empty;
     private string _currentVersionText = "Current version: unknown";
-    private string _updateStatusText = "Automatically checks GitHub releases on startup and installs newer portable builds.";
+    private string _updateStatusText = "Automatically checks GitHub releases on startup.";
     private string _installUpdateButtonText = "Install Update";
+    private string _updateNotesTitle = "Update Notes";
+    private string _updateNotesText = string.Empty;
     private bool _isCapturing;
     private bool _startCaptureOnStartup;
     private bool _isSettingsTabSelected;
     private bool _isCheckingForUpdates;
     private bool _isUpdateAvailable;
+    private bool _isPackagedApp;
 
     public MainWindowViewModel()
     {
@@ -151,6 +154,26 @@ public sealed class MainWindowViewModel : BindableObject
         set => SetProperty(ref _installUpdateButtonText, value);
     }
 
+    public string UpdateNotesTitle
+    {
+        get => _updateNotesTitle;
+        set => SetProperty(ref _updateNotesTitle, value);
+    }
+
+    public string UpdateNotesText
+    {
+        get => _updateNotesText;
+        set
+        {
+            if (SetProperty(ref _updateNotesText, value))
+            {
+                RaisePropertyChanged(nameof(HasUpdateNotes));
+            }
+        }
+    }
+
+    public bool HasUpdateNotes => !string.IsNullOrWhiteSpace(UpdateNotesText);
+
     public bool IsCapturing
     {
         get => _isCapturing;
@@ -205,9 +228,25 @@ public sealed class MainWindowViewModel : BindableObject
         }
     }
 
-    public bool CanCheckForUpdates => !IsCheckingForUpdates;
+    public bool IsPackagedApp
+    {
+        get => _isPackagedApp;
+        set
+        {
+            if (SetProperty(ref _isPackagedApp, value))
+            {
+                RaisePropertyChanged(nameof(CanCheckForUpdates));
+                RaisePropertyChanged(nameof(CanInstallUpdate));
+                RaisePropertyChanged(nameof(ShowsGitHubUpdateActions));
+            }
+        }
+    }
 
-    public bool CanInstallUpdate => IsUpdateAvailable && !IsCheckingForUpdates;
+    public bool CanCheckForUpdates => !IsPackagedApp && !IsCheckingForUpdates;
+
+    public bool CanInstallUpdate => !IsPackagedApp && IsUpdateAvailable && !IsCheckingForUpdates;
+
+    public bool ShowsGitHubUpdateActions => !IsPackagedApp;
 
     public bool IsSettingsTabSelected
     {

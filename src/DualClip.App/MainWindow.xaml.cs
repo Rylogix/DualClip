@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Drawing;
 using System.Globalization;
@@ -42,12 +43,16 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, DateTimeOffset> _nextClipAllowedAtByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
     private readonly object _clipCooldownLock = new();
+    private readonly object _clipDeleteQueueLock = new();
+    private readonly Queue<QueuedClipDeletion> _clipDeleteQueue = new();
+    private readonly HashSet<string> _pendingClipDeletionPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly MediaElement _previewMediaElement;
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
     private bool _hasShownTrayTip;
     private bool _hasShownUpdateTip;
     private bool _isEditorBusy;
+    private bool _isProcessingClipDeleteQueue;
     private bool _isUpdatingTransformControls;
     private double _selectedClipDurationSeconds;
     private int _selectedClipWidth;
@@ -71,6 +76,7 @@ public partial class MainWindow : Window
     private AudioReplaySession? _audioSession;
     private CancellationTokenSource? _clipLibraryThumbnailCts;
     private GitHubUpdateRelease? _pendingUpdate;
+    private readonly bool _isPackagedApp = AppRuntimeInfo.IsPackaged;
 
     public MainWindow()
     {
@@ -81,7 +87,13 @@ public partial class MainWindow : Window
         PreviewMediaHost.Children.Add(_previewMediaElement);
         StartupDiagnostics.Write("MainWindow preview media element created.");
         DataContext = _viewModel;
+        _viewModel.IsPackagedApp = _isPackagedApp;
         _viewModel.CurrentVersionText = $"Current version: v{_updateService.CurrentVersionText}";
+        if (_isPackagedApp)
+        {
+            _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            _viewModel.InstallUpdateButtonText = "Store Managed";
+        }
         PreviewMediaElement.SpeedRatio = 1.0d;
         StartupDiagnostics.Write("MainWindow creating notify icon.");
         _notifyIcon = CreateNotifyIcon();
@@ -112,6 +124,22 @@ public partial class MainWindow : Window
         var windowHandle = new WindowInteropHelper(this).Handle;
         _hotkeyManager.Attach(windowHandle);
         _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
+    }
+
+    private void OpenDiscordButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "https://discord.gg/8E5qhMNhsR",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _viewModel.AppStatus = $"Could not open Discord invite: {ex.Message}";
+        }
     }
 
     private void Window_StateChanged(object? sender, EventArgs e)
@@ -352,9 +380,16 @@ public partial class MainWindow : Window
             RefreshClipLibrary();
             UpdateEditorControlState();
 
-            StartupDiagnostics.Write("LoadStateAsync checking for updates.");
-            await CheckForUpdatesAsync(isManual: false, installWhenAvailable: false);
-            StartupDiagnostics.Write("LoadStateAsync finished update check.");
+            if (_isPackagedApp)
+            {
+                StartupDiagnostics.Write("LoadStateAsync skipped GitHub update check for packaged app.");
+            }
+            else
+            {
+                StartupDiagnostics.Write("LoadStateAsync checking for updates.");
+                await CheckForUpdatesAsync(isManual: false, installWhenAvailable: false);
+                StartupDiagnostics.Write("LoadStateAsync finished update check.");
+            }
 
             if (_isExitRequested)
             {
@@ -609,6 +644,13 @@ public partial class MainWindow : Window
 
     private async Task CheckForUpdatesAsync(bool isManual, bool installWhenAvailable)
     {
+        if (_isPackagedApp)
+        {
+            SetPendingUpdate(null, isUpdateAvailable: false);
+            _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            return;
+        }
+
         if (_viewModel.IsCheckingForUpdates)
         {
             return;
@@ -622,7 +664,7 @@ public partial class MainWindow : Window
         try
         {
             var result = await _updateService.CheckForUpdatesAsync();
-            SetPendingUpdate(result.Release);
+            SetPendingUpdate(result.Release, result.IsUpdateAvailable);
             _viewModel.UpdateStatusText = result.StatusMessage;
 
             if (result.IsUpdateAvailable && result.Release is not null && !_hasShownUpdateTip)
@@ -639,7 +681,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            SetPendingUpdate(null);
+            SetPendingUpdate(null, isUpdateAvailable: false);
             _viewModel.UpdateStatusText = isManual
                 ? $"GitHub update check failed: {ex.Message}"
                 : "Automatic update check could not reach GitHub.";
@@ -652,6 +694,12 @@ public partial class MainWindow : Window
 
     private async Task InstallPendingUpdateAsync(bool isAutomatic)
     {
+        if (_isPackagedApp)
+        {
+            _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            return;
+        }
+
         if (_pendingUpdate is null)
         {
             return;
@@ -662,6 +710,12 @@ public partial class MainWindow : Window
 
     private async Task InstallReleaseUpdateAsync(GitHubUpdateRelease release, bool isAutomatic)
     {
+        if (_isPackagedApp)
+        {
+            _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            return;
+        }
+
         if (_viewModel.IsCheckingForUpdates)
         {
             return;
@@ -710,13 +764,30 @@ public partial class MainWindow : Window
         }
     }
 
+    private void SetPendingUpdate(GitHubUpdateRelease? release, bool isUpdateAvailable)
+    {
+        _pendingUpdate = isUpdateAvailable ? release : null;
+        _viewModel.IsUpdateAvailable = isUpdateAvailable;
+        _viewModel.InstallUpdateButtonText = isUpdateAvailable && release is not null
+            ? $"Install v{release.VersionText}"
+            : "Install Update";
+
+        if (release is null)
+        {
+            _viewModel.UpdateNotesTitle = "Update Notes";
+            _viewModel.UpdateNotesText = string.Empty;
+            return;
+        }
+
+        _viewModel.UpdateNotesTitle = $"Update Notes for v{release.VersionText}";
+        _viewModel.UpdateNotesText = string.IsNullOrWhiteSpace(release.ReleaseNotes)
+            ? "No update notes for this update"
+            : release.ReleaseNotes;
+    }
+
     private void SetPendingUpdate(GitHubUpdateRelease? release)
     {
-        _pendingUpdate = release;
-        _viewModel.IsUpdateAvailable = release is not null;
-        _viewModel.InstallUpdateButtonText = release is null
-            ? "Install Update"
-            : $"Install v{release.VersionText}";
+        SetPendingUpdate(release, release is not null);
     }
 
     private async Task RestartForPreparedUpdateAsync(GitHubPreparedUpdate preparedUpdate)
@@ -1131,6 +1202,11 @@ public partial class MainWindow : Window
 
             foreach (var filePath in Directory.EnumerateFiles(folder, "*.mp4", SearchOption.TopDirectoryOnly))
             {
+                if (IsClipPendingDeletion(filePath))
+                {
+                    continue;
+                }
+
                 var fileInfo = new FileInfo(filePath);
                 clips.Add(new ClipLibraryItem
                 {
@@ -1147,6 +1223,14 @@ public partial class MainWindow : Window
             .Select(group => group.First())
             .OrderByDescending(item => item.ModifiedAt)
             .ToList();
+    }
+
+    private bool IsClipPendingDeletion(string filePath)
+    {
+        lock (_clipDeleteQueueLock)
+        {
+            return _pendingClipDeletionPaths.Contains(filePath);
+        }
     }
 
     private void StartClipLibraryThumbnailRefresh(IReadOnlyList<ClipLibraryItem> items)
@@ -1367,54 +1451,178 @@ public partial class MainWindow : Window
     private async void DeleteClipButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement element
-            || element.Tag is not string filePath
-            || string.IsNullOrWhiteSpace(filePath))
+            || element.DataContext is not ClipLibraryItem item
+            || string.IsNullOrWhiteSpace(item.FilePath))
         {
             return;
         }
 
-        var selectedClip = GetSelectedClip();
-        var deletedSelectedClip = string.Equals(selectedClip?.FilePath, filePath, StringComparison.OrdinalIgnoreCase);
-        var preferredPath = deletedSelectedClip ? null : selectedClip?.FilePath;
+        var filePath = item.FilePath;
         var clipName = Path.GetFileName(filePath);
+        var shouldStartDeleteProcessor = false;
 
-        try
+        lock (_clipDeleteQueueLock)
         {
-            if (!File.Exists(filePath))
+            if (!_pendingClipDeletionPaths.Add(filePath))
             {
-                RefreshClipLibrary(preferredPath);
-                _viewModel.ErrorMessage = string.Empty;
-                _viewModel.EditorStatus = $"{clipName} was already removed.";
                 return;
             }
 
-            if (deletedSelectedClip)
+            _clipDeleteQueue.Enqueue(new QueuedClipDeletion
             {
-                StopPreview(clearSource: true);
-                ClearTimelineUndoHistory();
-                ClearLoadedClipEditorState();
-                ClipListBox.SelectedItem = null;
-                _viewModel.Editor.SelectedClipTitle = "No clip selected";
-                _viewModel.EditorStatus = $"Deleting {clipName}...";
-                UpdateEditorControlState();
-                await Dispatcher.Yield(DispatcherPriority.Background);
-            }
+                FilePath = filePath,
+                ClipName = clipName,
+            });
 
-            File.Delete(filePath);
-            RefreshClipLibrary(preferredPath);
-
-            if (deletedSelectedClip && ClipListBox.SelectedItem is null && _viewModel.ClipLibrary.Count > 0)
+            if (!_isProcessingClipDeleteQueue)
             {
-                ClipListBox.SelectedIndex = 0;
+                _isProcessingClipDeleteQueue = true;
+                shouldStartDeleteProcessor = true;
             }
-
-            _viewModel.ErrorMessage = string.Empty;
-            _viewModel.EditorStatus = $"Deleted {clipName}.";
         }
-        catch (Exception ex)
+
+        RemoveClipFromLibraryForQueuedDeletion(item);
+        _viewModel.ErrorMessage = string.Empty;
+        _viewModel.EditorStatus = BuildClipDeleteQueuedStatus(clipName);
+
+        if (shouldStartDeleteProcessor)
         {
-            _viewModel.ErrorMessage = ex.Message;
-            _viewModel.EditorStatus = $"Delete failed: {ex.Message}";
+            await ProcessQueuedClipDeletionsAsync();
+        }
+    }
+
+    private void RemoveClipFromLibraryForQueuedDeletion(ClipLibraryItem item)
+    {
+        var selectedClip = GetSelectedClip();
+        var deletedSelectedClip = string.Equals(selectedClip?.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase);
+        var deletedIndex = _viewModel.ClipLibrary.IndexOf(item);
+
+        if (item.IsRenaming)
+        {
+            item.CancelRename();
+        }
+
+        if (deletedSelectedClip)
+        {
+            StopPreview(clearSource: true);
+            ClearTimelineUndoHistory();
+            ClearLoadedClipEditorState();
+        }
+
+        _viewModel.ClipLibrary.Remove(item);
+
+        if (_viewModel.ClipLibrary.Count == 0)
+        {
+            ClipListBox.SelectedItem = null;
+            _viewModel.Editor.SelectedClipTitle = "No clip selected";
+            _viewModel.EditorStatus = "No clips found in the export folders yet.";
+            UpdateEditorControlState();
+            return;
+        }
+
+        if (deletedSelectedClip)
+        {
+            ClipListBox.SelectedIndex = Math.Clamp(deletedIndex, 0, _viewModel.ClipLibrary.Count - 1);
+            return;
+        }
+
+        UpdateEditorControlState();
+    }
+
+    private async Task ProcessQueuedClipDeletionsAsync()
+    {
+        while (true)
+        {
+            QueuedClipDeletion deletion;
+
+            lock (_clipDeleteQueueLock)
+            {
+                if (_clipDeleteQueue.Count == 0)
+                {
+                    _isProcessingClipDeleteQueue = false;
+                    return;
+                }
+
+                deletion = _clipDeleteQueue.Dequeue();
+            }
+
+            await Dispatcher.InvokeAsync(
+                () =>
+                {
+                    _viewModel.ErrorMessage = string.Empty;
+                    _viewModel.EditorStatus = BuildClipDeleteInProgressStatus(deletion.ClipName);
+                },
+                DispatcherPriority.Background);
+
+            string? deleteError = null;
+
+            try
+            {
+                await Task.Run(() =>
+                {
+                    if (File.Exists(deletion.FilePath))
+                    {
+                        File.Delete(deletion.FilePath);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                deleteError = ex.Message;
+            }
+
+            lock (_clipDeleteQueueLock)
+            {
+                _pendingClipDeletionPaths.Remove(deletion.FilePath);
+            }
+
+            await Dispatcher.InvokeAsync(
+                () =>
+                {
+                    if (string.IsNullOrWhiteSpace(deleteError))
+                    {
+                        _viewModel.ErrorMessage = string.Empty;
+                        _viewModel.EditorStatus = BuildClipDeleteCompletedStatus(deletion.ClipName);
+                        return;
+                    }
+
+                    _viewModel.ErrorMessage = deleteError;
+                    RefreshClipLibrary(GetSelectedClip()?.FilePath);
+                    _viewModel.EditorStatus = $"Delete failed: {deleteError}";
+                },
+                DispatcherPriority.Background);
+        }
+    }
+
+    private string BuildClipDeleteQueuedStatus(string clipName)
+    {
+        var remaining = GetPendingClipDeletionCount();
+        return remaining > 1
+            ? $"Queued {clipName} for deletion. {remaining} clips are pending."
+            : $"Queued {clipName} for deletion.";
+    }
+
+    private string BuildClipDeleteInProgressStatus(string clipName)
+    {
+        var remaining = GetPendingClipDeletionCount();
+        return remaining > 1
+            ? $"Deleting {clipName}... {remaining - 1} more queued."
+            : $"Deleting {clipName}...";
+    }
+
+    private string BuildClipDeleteCompletedStatus(string clipName)
+    {
+        var remaining = GetPendingClipDeletionCount();
+        return remaining > 0
+            ? $"Deleted {clipName}. {remaining} clip deletes still running."
+            : $"Deleted {clipName}.";
+    }
+
+    private int GetPendingClipDeletionCount()
+    {
+        lock (_clipDeleteQueueLock)
+        {
+            return _pendingClipDeletionPaths.Count;
         }
     }
 
@@ -1628,16 +1836,15 @@ public partial class MainWindow : Window
 
     private void UpdateTimelinePlaybackVisuals()
     {
-        if (TimelineCanvas is null || PlayheadLine is null || PlayheadThumb is null || GetTimelineDurationSeconds() <= 0)
+        if (TimelineOverlayCanvas is null || PlayheadLine is null || PlayheadThumb is null || GetTimelineDurationSeconds() <= 0)
         {
             return;
         }
 
-        const double playheadTop = 12d;
         var playheadX = TimeToTimelineX(_playheadSeconds);
         Canvas.SetLeft(PlayheadLine, playheadX - (PlayheadLine.Width / 2d));
-        Canvas.SetTop(PlayheadLine, playheadTop);
-        PositionTimelineThumb(PlayheadThumb, playheadX, playheadTop - 2d);
+        Canvas.SetTop(PlayheadLine, TimelinePlayheadTopPixels);
+        PositionTimelineThumb(PlayheadThumb, playheadX, TimelinePlayheadTopPixels - 2d);
         ScrollPlayheadIntoView();
         UpdateTimelineLabel(_playheadSeconds);
     }
@@ -1793,20 +2000,6 @@ public partial class MainWindow : Window
 
     private void PreviewHost_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        UpdateCropOverlay();
-    }
-
-    private void CropMoveThumb_DragDelta(object sender, DragDeltaEventArgs e)
-    {
-        if (!TryGetPreviewSourceDelta(e.HorizontalChange, e.VerticalChange, out var deltaX, out var deltaY))
-        {
-            return;
-        }
-
-        var nextX = Math.Clamp(_cropRectSource.X + deltaX, 0, Math.Max(0, _selectedClipWidth - _cropRectSource.Width));
-        var nextY = Math.Clamp(_cropRectSource.Y + deltaY, 0, Math.Max(0, _selectedClipHeight - _cropRectSource.Height));
-        _cropRectSource = new Rect(nextX, nextY, _cropRectSource.Width, _cropRectSource.Height);
-        ApplyCurrentEditorStateToSelectedSegment();
         UpdateCropOverlay();
     }
 
@@ -2067,7 +2260,7 @@ public partial class MainWindow : Window
 
     private void UpdateTimelineVisuals()
     {
-        if (TimelineCanvas is null || TimelineSegmentsCanvas is null)
+        if (TimelineCanvas is null || TimelineSegmentsCanvas is null || TimelineOverlayCanvas is null)
         {
             return;
         }
@@ -2079,6 +2272,8 @@ public partial class MainWindow : Window
         TimelineCanvas.Height = timelineHeight;
         TimelineSegmentsCanvas.Width = timelineWidth;
         TimelineSegmentsCanvas.Height = timelineHeight;
+        TimelineOverlayCanvas.Width = timelineWidth;
+        TimelineOverlayCanvas.Height = timelineHeight;
 
         RenderTimelineSegments();
 
@@ -2110,8 +2305,8 @@ public partial class MainWindow : Window
         TimelineTrackRectangle.Visibility = editorVisibility;
         TrimSelectionRectangle.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
         PlayheadLine.Visibility = editorVisibility;
-        TrimStartThumb.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
-        TrimEndThumb.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
+        TrimStartThumb.Visibility = Visibility.Collapsed;
+        TrimEndThumb.Visibility = Visibility.Collapsed;
         PlayheadThumb.Visibility = editorVisibility;
 
         TrimRangeTextBlock.Text = hasSelectedSegment
@@ -2180,11 +2375,6 @@ public partial class MainWindow : Window
         CropSelectionBorder.Height = cropLocalRect.Height;
         Canvas.SetLeft(CropSelectionBorder, cropLocalRect.X);
         Canvas.SetTop(CropSelectionBorder, cropLocalRect.Y);
-
-        CropMoveThumb.Width = cropLocalRect.Width;
-        CropMoveThumb.Height = cropLocalRect.Height;
-        Canvas.SetLeft(CropMoveThumb, cropLocalRect.X);
-        Canvas.SetTop(CropMoveThumb, cropLocalRect.Y);
 
         PositionCropThumb(CropTopLeftThumb, cropLocalRect.Left, cropLocalRect.Top);
         PositionCropThumb(CropTopRightThumb, cropLocalRect.Right, cropLocalRect.Top);
@@ -2330,7 +2520,6 @@ public partial class MainWindow : Window
         }
 
         CropSelectionBorder.Visibility = showCropBorder ? Visibility.Visible : Visibility.Collapsed;
-        CropMoveThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
         CropTopLeftThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
         CropTopRightThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
         CropBottomLeftThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
@@ -2720,5 +2909,12 @@ public partial class MainWindow : Window
     private static uint TryGetVirtualKey(Key key)
     {
         return key == Key.None ? 0u : (uint)KeyInterop.VirtualKeyFromKey(key);
+    }
+
+    private sealed class QueuedClipDeletion
+    {
+        public required string FilePath { get; init; }
+
+        public required string ClipName { get; init; }
     }
 }

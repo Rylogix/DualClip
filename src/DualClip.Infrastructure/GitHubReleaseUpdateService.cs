@@ -94,6 +94,7 @@ public sealed class GitHubReleaseUpdateService
             DisplayName: string.IsNullOrWhiteSpace(release.Name) ? release.TagName ?? $"v{releaseVersion}" : release.Name.Trim(),
             PublishedAtUtc: release.PublishedAt,
             HtmlUrl: release.HtmlUrl ?? $"https://github.com/{RepositoryOwner}/{RepositoryName}/releases/tag/{Uri.EscapeDataString(release.TagName ?? $"v{releaseVersion}")}",
+            ReleaseNotes: NormalizeReleaseNotes(release.Body),
             AssetName: asset.Name!,
             AssetDownloadUrl: asset.BrowserDownloadUrl!);
 
@@ -101,7 +102,7 @@ public sealed class GitHubReleaseUpdateService
         {
             return new GitHubUpdateCheckResult(
                 IsUpdateAvailable: false,
-                Release: null,
+                Release: releaseInfo,
                 StatusMessage: $"DualClip is up to date on v{CurrentVersionText}.");
         }
 
@@ -455,6 +456,43 @@ public sealed class GitHubReleaseUpdateService
             : normalized;
     }
 
+    private static string NormalizeReleaseNotes(string? releaseNotes)
+    {
+        if (string.IsNullOrWhiteSpace(releaseNotes))
+        {
+            return string.Empty;
+        }
+
+        var normalized = releaseNotes
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Trim();
+
+        var filteredLines = normalized
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => !IsFullChangelogLine(line))
+            .ToList();
+
+        return string.Join(
+            Environment.NewLine,
+            filteredLines.Where((line, index) =>
+                !string.IsNullOrWhiteSpace(line)
+                || (index > 0 && index < filteredLines.Count - 1 && !string.IsNullOrWhiteSpace(filteredLines[index - 1]) && !string.IsNullOrWhiteSpace(filteredLines[index + 1]))))
+            .Trim();
+    }
+
+    private static bool IsFullChangelogLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return line.StartsWith("**Full Changelog**:", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("Full Changelog:", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string BuildBackupExecutablePath(string currentExecutablePath)
     {
         var directory = Path.GetDirectoryName(currentExecutablePath) ?? throw new InvalidOperationException("DualClip could not determine its install folder.");
@@ -559,6 +597,9 @@ exit /b 1
         [JsonPropertyName("published_at")]
         public DateTimeOffset? PublishedAt { get; set; }
 
+        [JsonPropertyName("body")]
+        public string? Body { get; set; }
+
         [JsonPropertyName("draft")]
         public bool Draft { get; set; }
 
@@ -586,6 +627,7 @@ public sealed record GitHubUpdateRelease(
     string DisplayName,
     DateTimeOffset? PublishedAtUtc,
     string HtmlUrl,
+    string ReleaseNotes,
     string AssetName,
     string AssetDownloadUrl);
 

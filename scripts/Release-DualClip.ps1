@@ -7,6 +7,10 @@ param(
 
     [string]$Remote = 'origin',
 
+    [string]$NotesFile,
+
+    [switch]$BuildReleaseArtifacts,
+
     [switch]$SkipBuild,
 
     [switch]$DryRun
@@ -168,6 +172,38 @@ function Update-FileVersionString {
     Set-Content -LiteralPath $Path -Value $updated -NoNewline
 }
 
+function Save-ReleaseNotesFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourcePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    $SourcePath = $SourcePath.Trim()
+
+    if ($SourcePath.Length -ge 2 -and $SourcePath.StartsWith('"') -and $SourcePath.EndsWith('"')) {
+        $SourcePath = $SourcePath.Trim('"')
+    }
+
+    $resolvedSourcePath = (Resolve-Path -LiteralPath $SourcePath).Path
+    $notesContent = Get-Content -LiteralPath $resolvedSourcePath -Raw
+
+    if ([string]::IsNullOrWhiteSpace($notesContent)) {
+        throw "Release notes file '$SourcePath' is empty."
+    }
+
+    $normalizedContent = ($notesContent -replace "`r`n", "`n" -replace "`r", "`n").Trim()
+    $destinationDirectory = Split-Path -Parent $DestinationPath
+
+    if (-not [string]::IsNullOrWhiteSpace($destinationDirectory)) {
+        New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    }
+
+    [System.IO.File]::WriteAllText($DestinationPath, $normalizedContent, [System.Text.UTF8Encoding]::new($false))
+}
+
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
     throw "Git is required to create the release commit and tag."
@@ -183,7 +219,9 @@ Set-Location $repoRoot
 
 $projectPath = Join-Path $repoRoot 'src\DualClip.App\DualClip.App.csproj'
 $manifestPath = Join-Path $repoRoot 'packaging\Identity\AppxManifest.xml'
+$releaseNotesDirectory = Join-Path $repoRoot '.github\release-notes'
 $solutionPath = Join-Path $repoRoot 'DualClip.sln'
+$releasePublisherScriptPath = Join-Path $repoRoot 'scripts\Publish-DualClip-GitHubRelease.ps1'
 
 $projectContent = Get-Content -LiteralPath $projectPath -Raw
 $projectVersionMatch = [regex]::Match($projectContent, '<Version>(?<version>[^<]+)</Version>')
@@ -203,6 +241,7 @@ $versionAlreadySet = $targetVersion -eq $currentVersion
 
 $tag = "v$targetVersion"
 $appxVersion = "$targetVersion.0"
+$releaseNotesPath = Join-Path $releaseNotesDirectory "$tag.md"
 
 $branchResult = Invoke-Tool -FilePath $git.Source -Arguments @('branch', '--show-current')
 $branch = (($branchResult.Output | Select-Object -First 1) -as [string]).Trim()
@@ -249,6 +288,9 @@ Write-Host "  Appx version:    $appxVersion"
 Write-Host "  Branch:          $branch"
 Write-Host "  Remote:          $Remote"
 Write-Host "  Tag:             $tag"
+if ($PSBoundParameters.ContainsKey('NotesFile')) {
+    Write-Host "  Release notes:   $releaseNotesPath"
+}
 if ($remoteBranchExists) {
     Write-Host "  Ahead of remote: $aheadCount commit(s)"
 }
@@ -284,11 +326,29 @@ if (-not $versionAlreadySet) {
     }
 }
 
+if ($PSBoundParameters.ContainsKey('NotesFile')) {
+    Write-Host "Saving release notes..."
+    Save-ReleaseNotesFile -SourcePath $NotesFile -DestinationPath $releaseNotesPath
+}
+
 if (-not $SkipBuild) {
     Write-Host ""
     Write-Host "Running release build validation..."
     Write-Host "Build output will stream below."
     Invoke-ToolStreaming -FilePath $dotnet.Source -Arguments @('build', $solutionPath, '-c', 'Release', '--nologo')
+}
+
+if ($BuildReleaseArtifacts) {
+    Write-Host ""
+    Write-Host "Building local release artifacts (.exe + .msix)..."
+    Invoke-ToolStreaming -FilePath "powershell" -Arguments @(
+        '-NoLogo',
+        '-NoProfile',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', $releasePublisherScriptPath,
+        '-Version', $targetVersion,
+        '-IncludeMsix'
+    )
 }
 
 $commitMessage = "release: $tag"

@@ -11,8 +11,8 @@
   <Identity
     Name="DualClip.Identity"
     Publisher="CN=DualClip Development"
-    Version="0.6.0.0"
-    ProcessorArchitecture="neutral" />
+    Version="0.7.0.0"
+    ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>DualClip</DisplayName>
@@ -37,7 +37,6 @@
     <uap11:Capability Name="graphicsCaptureProgrammatic" />
     <uap11:Capability Name="graphicsCaptureWithoutBorder" />
     <rescap:Capability Name="runFullTrust" />
-    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 
   <Applications>
@@ -47,9 +46,9 @@
       uap10:TrustLevel="mediumIL"
       uap10:RuntimeBehavior="win32App">
       <uap:VisualElements
-        AppListEntry="none"
+        AppListEntry="default"
         DisplayName="DualClip"
-        Description="DualClip borderless capture identity package"
+        Description="DualClip screen capture and clip editing"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />

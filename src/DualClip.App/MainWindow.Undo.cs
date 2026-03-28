@@ -17,16 +17,23 @@ public partial class MainWindow
         var key = GetActualKey(e);
         var modifiers = Keyboard.Modifiers;
 
-        if (IsAnyHotkeyEditorRecording() || IsTextInputFocused())
+        if (IsAnyHotkeyEditorRecording())
         {
             return;
         }
 
         if (key == Key.Z
-            && modifiers == ModifierKeys.None
+            && modifiers == ModifierKeys.Control
+            && (!IsTextInputFocused() || IsFocusedElementTransformInput())
+            && PrepareFocusedTransformUndo()
             && TryUndoTimelineEdit())
         {
             e.Handled = true;
+            return;
+        }
+
+        if (IsTextInputFocused())
+        {
             return;
         }
 
@@ -228,6 +235,47 @@ public partial class MainWindow
             or System.Windows.Controls.CheckBox
             or System.Windows.Controls.PasswordBox
             or System.Windows.Controls.Primitives.TextBoxBase;
+    }
+
+    private bool IsFocusedElementTransformInput()
+    {
+        return Keyboard.FocusedElement is Slider slider && IsTransformSlider(slider)
+            || Keyboard.FocusedElement is System.Windows.Controls.TextBox textBox && IsTransformTextBox(textBox);
+    }
+
+    private bool PrepareFocusedTransformUndo()
+    {
+        if (Keyboard.FocusedElement is not System.Windows.Controls.TextBox textBox || !IsTransformTextBox(textBox))
+        {
+            return true;
+        }
+
+        if (!double.TryParse(textBox.Text, out _))
+        {
+            UpdateTransformControlsFromState();
+            return false;
+        }
+
+        CommitTransformTextBoxValue(textBox);
+        return true;
+    }
+
+    private bool IsTransformSlider(Slider slider)
+    {
+        return ReferenceEquals(slider, RotationSlider)
+            || ReferenceEquals(slider, ScaleSlider)
+            || ReferenceEquals(slider, PositionXSlider)
+            || ReferenceEquals(slider, PositionYSlider)
+            || ReferenceEquals(slider, OpacitySlider);
+    }
+
+    private bool IsTransformTextBox(System.Windows.Controls.TextBox textBox)
+    {
+        return ReferenceEquals(textBox, RotationTextBox)
+            || ReferenceEquals(textBox, ScaleTextBox)
+            || ReferenceEquals(textBox, PositionXTextBox)
+            || ReferenceEquals(textBox, PositionYTextBox)
+            || ReferenceEquals(textBox, OpacityTextBox);
     }
 
     private sealed class TimelineUndoSnapshot

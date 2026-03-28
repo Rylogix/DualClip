@@ -241,14 +241,14 @@ public partial class MainWindow
         var accentBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Goldenrod;
         var borderBrush = TryFindResource("BorderBrushDark") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Gray;
         var textBrush = TryFindResource("TextBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.White;
+        var previewStarts = BuildTimelineSegmentPreviewStarts();
 
         for (var index = 0; index < _timelineSegments.Count; index++)
         {
             var segment = _timelineSegments[index];
             var start = GetSegmentTimelineStartSeconds(segment);
-            var end = start + segment.DurationSeconds;
-            var displayStart = _isTimelineSegmentDragging && _didTimelineSegmentDragMove && ReferenceEquals(segment, _draggingTimelineSegment)
-                ? _timelineSegmentDragCurrentStartSeconds
+            var displayStart = previewStarts is not null && previewStarts.TryGetValue(segment.Id, out var previewStart)
+                ? previewStart
                 : start;
             var left = TimeToTimelineX(displayStart);
             var right = TimeToTimelineX(displayStart + segment.DurationSeconds);
@@ -302,6 +302,32 @@ public partial class MainWindow
             System.Windows.Controls.Panel.SetZIndex(border, _isTimelineSegmentDragging && ReferenceEquals(segment, _draggingTimelineSegment) ? 3 : 1);
             TimelineSegmentsCanvas.Children.Add(border);
         }
+    }
+
+    private Dictionary<Guid, double>? BuildTimelineSegmentPreviewStarts()
+    {
+        if (!_isTimelineSegmentDragging || !_didTimelineSegmentDragMove || _draggingTimelineSegment is null)
+        {
+            return null;
+        }
+
+        var previewOrder = _timelineSegments
+            .Where(segment => !ReferenceEquals(segment, _draggingTimelineSegment))
+            .ToList();
+
+        var insertIndex = Math.Clamp(_timelineSegmentDropIndex, 0, previewOrder.Count);
+        previewOrder.Insert(insertIndex, _draggingTimelineSegment);
+
+        var previewStarts = new Dictionary<Guid, double>(previewOrder.Count);
+        double currentStart = 0;
+
+        foreach (var segment in previewOrder)
+        {
+            previewStarts[segment.Id] = currentStart;
+            currentStart += segment.DurationSeconds;
+        }
+
+        return previewStarts;
     }
 
     private void TimelineSegmentBorder_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
 
+    [switch]$IncludeMsix,
+
     [switch]$Upload,
 
     [string]$NotesFile
@@ -26,8 +28,11 @@ $tag = "v$normalizedVersion"
 $releaseRoot = Join-Path $repoRoot "artifacts\github-release\$normalizedVersion"
 $publishDir = Join-Path $releaseRoot "publish"
 $assetPath = Join-Path $releaseRoot "DualClip.App.exe"
+$msixRoot = Join-Path $releaseRoot "msix"
 $projectPath = Join-Path $repoRoot "src\DualClip.App\DualClip.App.csproj"
 $repository = "Rylogix/DualClip"
+$msixPath = $null
+$msixUploadPath = $null
 
 Write-Host "Preparing GitHub release asset for $tag..."
 
@@ -56,9 +61,25 @@ if ($LASTEXITCODE -ne 0) {
 
 Copy-Item -LiteralPath (Join-Path $publishDir "DualClip.App.exe") -Destination $assetPath -Force
 
+if ($IncludeMsix) {
+    Write-Host ""
+    Write-Host "Building MSIX release assets..."
+    $msixResult = & (Join-Path $PSScriptRoot "Build-DualClipMsix.ps1") `
+        -Version $normalizedVersion `
+        -Configuration Release `
+        -OutputRoot $msixRoot
+
+    $msixPath = $msixResult.MsixPath
+    $msixUploadPath = $msixResult.MsixUploadPath
+}
+
 Write-Host ""
 Write-Host "Release asset created:"
 Write-Host "  $assetPath"
+if ($IncludeMsix) {
+    Write-Host "  $msixPath"
+    Write-Host "  $msixUploadPath"
+}
 Write-Host ""
 Write-Host "GitHub tag:"
 Write-Host "  $tag"
@@ -77,17 +98,37 @@ if (-not $gh) {
 Write-Host ""
 Write-Host "Uploading $assetPath to $repository..."
 
+$assetsToUpload = @($assetPath)
+if ($IncludeMsix) {
+    if (-not [string]::IsNullOrWhiteSpace($msixPath) -and (Test-Path -LiteralPath $msixPath)) {
+        $assetsToUpload += $msixPath
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($msixUploadPath) -and (Test-Path -LiteralPath $msixUploadPath)) {
+        $assetsToUpload += $msixUploadPath
+    }
+}
+
 & $gh.Source release view $tag --repo $repository *> $null
 $releaseExists = $LASTEXITCODE -eq 0
 
 if ($releaseExists) {
-    & $gh.Source release upload $tag $assetPath --repo $repository --clobber
+    if (-not [string]::IsNullOrWhiteSpace($NotesFile)) {
+        $resolvedNotesFile = Resolve-Path -LiteralPath $NotesFile
+        & $gh.Source release edit $tag --repo $repository --notes-file $resolvedNotesFile.Path --title "DualClip $tag"
+        if ($LASTEXITCODE -ne 0) {
+            throw "gh release edit failed."
+        }
+    }
+
+    $uploadArgs = @("release", "upload", $tag) + $assetsToUpload + @("--repo", $repository, "--clobber")
+    & $gh.Source @uploadArgs
     if ($LASTEXITCODE -ne 0) {
         throw "gh release upload failed."
     }
 }
 else {
-    $createArgs = @("release", "create", $tag, $assetPath, "--repo", $repository, "--title", "DualClip $tag")
+    $createArgs = @("release", "create", $tag) + $assetsToUpload + @("--repo", $repository, "--title", "DualClip $tag")
 
     if ([string]::IsNullOrWhiteSpace($NotesFile)) {
         $createArgs += "--generate-notes"

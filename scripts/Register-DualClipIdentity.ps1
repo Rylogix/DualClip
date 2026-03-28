@@ -9,33 +9,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Test-IsAdministrator {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-if (-not (Test-IsAdministrator)) {
-    $argumentList = @(
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", ('"{0}"' -f $PSCommandPath),
-        "-Configuration", $Configuration
-    )
-
-    if ($PSBoundParameters.ContainsKey("AppOutputPath")) {
-        $argumentList += @("-AppOutputPath", ('"{0}"' -f $AppOutputPath))
-    }
-
-    if ($ForceReinstall) {
-        $argumentList += "-ForceReinstall"
-    }
-
-    $process = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argumentList -Wait -PassThru
-    exit $process.ExitCode
-}
-
 function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
@@ -143,10 +116,7 @@ function Ensure-SigningCertificate {
     Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password $password -Force | Out-Null
 
     foreach ($store in @(
-        "Cert:\CurrentUser\TrustedPeople",
-        "Cert:\CurrentUser\Root",
-        "Cert:\LocalMachine\TrustedPeople",
-        "Cert:\LocalMachine\Root"
+        "Cert:\CurrentUser\TrustedPeople"
     )) {
         if (-not (Get-ChildItem $store | Where-Object Thumbprint -eq $cert.Thumbprint)) {
             Import-Certificate -FilePath $cerPath -CertStoreLocation $store | Out-Null
@@ -196,7 +166,7 @@ if (!(Test-Path $appExe)) {
 }
 
 $manifestRoot = Join-Path $repoRoot "packaging\Identity"
-$manifestPath = Join-Path $manifestRoot "Package.appxmanifest"
+$manifestPath = Join-Path $manifestRoot "AppxManifest.xml"
 
 Ensure-IdentityAssets -ManifestRoot $manifestRoot
 $tools = Ensure-BuildTools -RepoRoot $repoRoot
