@@ -17,6 +17,11 @@ public partial class MainWindow
     private const double TimelineSnapThresholdPixels = 16d;
     private const double TimelineDragActivationPixels = 4d;
     private const double PreviewMoveDeadzonePixels = 1d;
+    private const double TimelineSegmentTopPixels = 8d;
+    private const double TimelineSegmentHeightPixels = 42d;
+    private const double TimelineTrackTopPixels = 76d;
+    private const double TimelinePlayheadTopPixels = 52d;
+    private const double TimelineTrimThumbTopPixels = 64d;
 
     private TimelineSegment? _copiedSegmentSettings;
     private TimelineSegment? _draggingTimelineSegment;
@@ -29,7 +34,7 @@ public partial class MainWindow
 
     private double GetTimelinePixelsPerSecond()
     {
-        return Math.Clamp(_viewModel.Editor.TimelineZoomPercent, 40d, 260d);
+        return 100d;
     }
 
     private double GetTimelineCanvasWidth()
@@ -188,17 +193,6 @@ public partial class MainWindow
         });
     }
 
-    private void TimelineZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-    {
-        if (_viewModel.Editor is null)
-        {
-            return;
-        }
-
-        _viewModel.Editor.TimelineZoomPercent = e.NewValue;
-        UpdateTimelineVisuals();
-    }
-
     private void TimelineScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (Math.Abs(e.HorizontalChange) > double.Epsilon)
@@ -229,7 +223,33 @@ public partial class MainWindow
         var interval = GetTimelineMarkerInterval(pixelsPerSecond);
         var rulerBrush = TryFindResource("BorderBrushDark") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Gray;
         var textBrush = TryFindResource("MutedTextBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.LightGray;
+        var accentBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Goldenrod;
         var maxSeconds = GetTimelineDurationSeconds();
+
+        var startTick = new System.Windows.Shapes.Rectangle
+        {
+            Width = 2,
+            Height = 18,
+            Fill = accentBrush,
+            RadiusX = 1,
+            RadiusY = 1,
+        };
+
+        Canvas.SetLeft(startTick, TimeToTimelineX(0) - (startTick.Width / 2d));
+        Canvas.SetTop(startTick, 8);
+        TimelineRulerCanvas.Children.Add(startTick);
+
+        var startLabel = new TextBlock
+        {
+            Text = "Start",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = accentBrush,
+        };
+
+        Canvas.SetLeft(startLabel, TimeToTimelineX(0) + 6);
+        Canvas.SetTop(startLabel, 0);
+        TimelineRulerCanvas.Children.Add(startLabel);
 
         for (var seconds = 0d; seconds <= maxSeconds + 0.001d; seconds += interval)
         {

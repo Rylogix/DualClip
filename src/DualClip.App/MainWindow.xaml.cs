@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private readonly AudioDeviceService _audioDeviceService = new();
     private readonly MainWindowViewModel _viewModel = new();
     private readonly FfmpegTimelineEditor _timelineEditor = new();
+    private readonly ClipThumbnailCache _clipThumbnailCache = new();
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly DispatcherTimer _previewTimer;
     private readonly Dictionary<string, MonitorCaptureSession> _monitorSessionsByNodeId = new(StringComparer.OrdinalIgnoreCase);
@@ -68,6 +69,7 @@ public partial class MainWindow : Window
     private bool _flipHorizontal;
     private bool _flipVertical;
     private AudioReplaySession? _audioSession;
+    private CancellationTokenSource? _clipLibraryThumbnailCts;
     private GitHubUpdateRelease? _pendingUpdate;
 
     public MainWindow()
@@ -171,6 +173,8 @@ public partial class MainWindow : Window
         _previewTimer.Stop();
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged -= MonitorNodes_CollectionChanged;
+        _clipLibraryThumbnailCts?.Cancel();
+        _clipLibraryThumbnailCts?.Dispose();
         foreach (var node in _viewModel.MonitorNodes)
         {
             node.PropertyChanged -= MonitorNode_PropertyChanged;
@@ -349,7 +353,7 @@ public partial class MainWindow : Window
             UpdateEditorControlState();
 
             StartupDiagnostics.Write("LoadStateAsync checking for updates.");
-            await CheckForUpdatesAsync(isManual: false, installWhenAvailable: true);
+            await CheckForUpdatesAsync(isManual: false, installWhenAvailable: false);
             StartupDiagnostics.Write("LoadStateAsync finished update check.");
 
             if (_isExitRequested)
@@ -759,7 +763,14 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrWhiteSpace(_viewModel.FfmpegPath) || !File.Exists(_viewModel.FfmpegPath))
         {
-            throw new InvalidOperationException($"ffmpeg.exe was not found at '{_viewModel.FfmpegPath}'.");
+            var resolvedFfmpegPath = AppPaths.ResolveDefaultFfmpegPath();
+
+            if (string.IsNullOrWhiteSpace(resolvedFfmpegPath) || !File.Exists(resolvedFfmpegPath))
+            {
+                throw new InvalidOperationException($"ffmpeg.exe was not found at '{_viewModel.FfmpegPath}'.");
+            }
+
+            _viewModel.FfmpegPath = resolvedFfmpegPath;
         }
 
         var selectedVideoQuality = _viewModel.SelectedVideoQuality?.Value
@@ -767,11 +778,6 @@ public partial class MainWindow : Window
         var selectedAudioMode = _viewModel.SelectedAudioMode?.Value
             ?? throw new InvalidOperationException("Choose an audio source before starting capture.");
         var clipAudioVolumePercent = (int)Math.Round(Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d), MidpointRounding.AwayFromZero);
-
-        if (selectedAudioMode == AudioCaptureMode.Microphone && _viewModel.SelectedMicrophone is null)
-        {
-            throw new InvalidOperationException("Choose a microphone device or disable audio.");
-        }
 
         var seenMonitorDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var monitorNodeConfigs = new List<MonitorNodeConfig>(_viewModel.MonitorNodes.Count);
@@ -815,7 +821,9 @@ public partial class MainWindow : Window
             VideoQuality = selectedVideoQuality,
             AudioMode = selectedAudioMode,
             ClipAudioVolumePercent = clipAudioVolumePercent,
-            MicrophoneDeviceId = _viewModel.SelectedMicrophone?.Id,
+            MicrophoneDeviceId = string.IsNullOrWhiteSpace(_viewModel.SelectedMicrophone?.Id)
+                ? null
+                : _viewModel.SelectedMicrophone.Id,
             OutputFolderA = monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
             OutputFolderB = monitorNodeConfigs.ElementAtOrDefault(1)?.OutputFolder ?? monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
             UseUnifiedOutputFolder = false,
@@ -1102,6 +1110,7 @@ public partial class MainWindow : Window
         }
 
         UpdateEditorControlState();
+        StartClipLibraryThumbnailRefresh(items);
     }
 
     private IReadOnlyList<ClipLibraryItem> GetClipLibraryItems()
@@ -1140,9 +1149,219 @@ public partial class MainWindow : Window
             .ToList();
     }
 
+    private void StartClipLibraryThumbnailRefresh(IReadOnlyList<ClipLibraryItem> items)
+    {
+        _clipLibraryThumbnailCts?.Cancel();
+        _clipLibraryThumbnailCts?.Dispose();
+
+        if (items.Count == 0)
+        {
+            _clipLibraryThumbnailCts = null;
+            return;
+        }
+
+        var ffmpegPath = ResolveClipLibraryThumbnailFfmpegPath();
+
+        if (string.IsNullOrWhiteSpace(ffmpegPath) || !File.Exists(ffmpegPath))
+        {
+            _clipLibraryThumbnailCts = null;
+            return;
+        }
+
+        var cancellationTokenSource = new CancellationTokenSource();
+        _clipLibraryThumbnailCts = cancellationTokenSource;
+        _ = PopulateClipLibraryThumbnailsAsync(items, ffmpegPath, cancellationTokenSource.Token);
+    }
+
+    private async Task PopulateClipLibraryThumbnailsAsync(
+        IReadOnlyList<ClipLibraryItem> items,
+        string ffmpegPath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var item in items)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var thumbnailPath = await _clipThumbnailCache
+                    .EnsureThumbnailAsync(ffmpegPath, item, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(thumbnailPath))
+                {
+                    continue;
+                }
+
+                await Dispatcher.InvokeAsync(() => item.SetThumbnailPath(thumbnailPath), DispatcherPriority.Background, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private string ResolveClipLibraryThumbnailFfmpegPath()
+    {
+        if (!string.IsNullOrWhiteSpace(_viewModel.FfmpegPath) && File.Exists(_viewModel.FfmpegPath))
+        {
+            return _viewModel.FfmpegPath;
+        }
+
+        return AppPaths.ResolveDefaultFfmpegPath();
+    }
+
     private void ClipListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         LoadSelectedClip();
+    }
+
+    private void RenameClipTitleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not ClipLibraryItem item)
+        {
+            return;
+        }
+
+        foreach (var clip in _viewModel.ClipLibrary.Where(clip => !ReferenceEquals(clip, item)))
+        {
+            clip.CancelRename();
+        }
+
+        item.BeginRename();
+    }
+
+    private void ClipTitleRenameTextBox_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfTextBox textBox
+            || textBox.DataContext is not ClipLibraryItem item
+            || !item.IsRenaming)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(
+            new Action(() =>
+            {
+                textBox.Focus();
+                textBox.SelectAll();
+            }),
+            DispatcherPriority.Input);
+    }
+
+    private async void ClipTitleRenameTextBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        await CommitClipRenameAsync((sender as FrameworkElement)?.DataContext as ClipLibraryItem);
+    }
+
+    private async void ClipTitleRenameTextBox_PreviewKeyDown(object sender, WpfKeyEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ClipLibraryItem item)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await CommitClipRenameAsync(item);
+            return;
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            item.CancelRename();
+        }
+    }
+
+    private async Task CommitClipRenameAsync(ClipLibraryItem? item)
+    {
+        if (item is null || !item.IsRenaming)
+        {
+            return;
+        }
+
+        var proposedName = (item.EditableFileName ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(proposedName))
+        {
+            item.CancelRename();
+            _viewModel.ErrorMessage = "Clip name cannot be empty.";
+            return;
+        }
+
+        if (proposedName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            item.CancelRename();
+            _viewModel.ErrorMessage = "Clip name contains invalid file name characters.";
+            return;
+        }
+
+        var directoryPath = Path.GetDirectoryName(item.FilePath)
+            ?? throw new InvalidOperationException("Clip folder could not be resolved.");
+        var newPath = Path.Combine(directoryPath, $"{proposedName}{item.FileExtension}");
+
+        item.EndRename();
+
+        if (string.Equals(item.FilePath, newPath, StringComparison.Ordinal))
+        {
+            _viewModel.ErrorMessage = string.Empty;
+            return;
+        }
+
+        var selectedClip = GetSelectedClip();
+        var renamedSelectedClip = string.Equals(selectedClip?.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase);
+
+        if (renamedSelectedClip)
+        {
+            StopPreview(clearSource: true);
+        }
+
+        try
+        {
+            RenameClipFile(item.FilePath, newPath);
+            _viewModel.ErrorMessage = string.Empty;
+            RefreshClipLibrary(newPath);
+
+            if (renamedSelectedClip)
+            {
+                LoadSelectedClip();
+            }
+        }
+        catch (Exception ex)
+        {
+            item.CancelRename();
+            _viewModel.ErrorMessage = ex.Message;
+        }
+    }
+
+    private static void RenameClipFile(string sourcePath, string destinationPath)
+    {
+        if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
+        {
+            var sourceFileName = Path.GetFileName(sourcePath);
+            var destinationFileName = Path.GetFileName(destinationPath);
+
+            if (string.Equals(sourceFileName, destinationFileName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var directoryPath = Path.GetDirectoryName(sourcePath)
+                ?? throw new InvalidOperationException("Clip folder could not be resolved.");
+            var temporaryPath = Path.Combine(directoryPath, $"{Guid.NewGuid():N}{Path.GetExtension(sourcePath)}");
+            File.Move(sourcePath, temporaryPath);
+            File.Move(temporaryPath, destinationPath);
+            return;
+        }
+
+        if (File.Exists(destinationPath))
+        {
+            throw new InvalidOperationException("A clip with that name already exists.");
+        }
+
+        File.Move(sourcePath, destinationPath);
     }
 
     private async void DeleteClipButton_Click(object sender, RoutedEventArgs e)
@@ -1853,9 +2072,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        const double trackTop = 34d;
-        const double playheadTop = 12d;
-        const double trimThumbTop = 24d;
         const double timelineHeight = 110d;
 
         var timelineWidth = GetTimelineCanvasWidth();
@@ -1869,7 +2085,7 @@ public partial class MainWindow : Window
         var width = timelineWidth;
         var trackWidth = Math.Max(0, width - TimelineLeftPaddingPixels - TimelineRightPaddingPixels);
         Canvas.SetLeft(TimelineTrackRectangle, TimelineLeftPaddingPixels);
-        Canvas.SetTop(TimelineTrackRectangle, trackTop);
+        Canvas.SetTop(TimelineTrackRectangle, TimelineTrackTopPixels);
         TimelineTrackRectangle.Width = trackWidth;
 
         var hasSelectedSegment = _selectedTimelineSegment is not null;
@@ -1879,15 +2095,16 @@ public partial class MainWindow : Window
         var trimEndX = TimeToTimelineX(selectedSegmentStart + selectedSegmentDuration);
         var playheadX = TimeToTimelineX(_playheadSeconds);
         Canvas.SetLeft(TrimSelectionRectangle, trimStartX);
-        Canvas.SetTop(TrimSelectionRectangle, trackTop);
+        Canvas.SetTop(TrimSelectionRectangle, TimelineTrackTopPixels);
         TrimSelectionRectangle.Width = Math.Max(0, trimEndX - trimStartX);
 
+        PlayheadLine.Height = Math.Max(24d, TimelineTrackTopPixels + TimelineTrackRectangle.Height - TimelinePlayheadTopPixels + 10d);
         Canvas.SetLeft(PlayheadLine, playheadX - (PlayheadLine.Width / 2d));
-        Canvas.SetTop(PlayheadLine, playheadTop);
+        Canvas.SetTop(PlayheadLine, TimelinePlayheadTopPixels);
 
-        PositionTimelineThumb(TrimStartThumb, trimStartX, trimThumbTop);
-        PositionTimelineThumb(TrimEndThumb, trimEndX, trimThumbTop);
-        PositionTimelineThumb(PlayheadThumb, playheadX, playheadTop - 2d);
+        PositionTimelineThumb(TrimStartThumb, trimStartX, TimelineTrimThumbTopPixels);
+        PositionTimelineThumb(TrimEndThumb, trimEndX, TimelineTrimThumbTopPixels);
+        PositionTimelineThumb(PlayheadThumb, playheadX, TimelinePlayheadTopPixels - 2d);
         var hasTimeline = GetTimelineDurationSeconds() > 0;
         var editorVisibility = hasTimeline ? Visibility.Visible : Visibility.Collapsed;
         TimelineTrackRectangle.Visibility = editorVisibility;
@@ -2026,7 +2243,6 @@ public partial class MainWindow : Window
         FlipHorizontalButton.IsEnabled = isEnabled;
         FlipVerticalButton.IsEnabled = isEnabled;
         ResetTransformButton.IsEnabled = isEnabled;
-        TimelineZoomSlider.IsEnabled = hasTimeline && !_isEditorBusy;
         ToolCropButton.IsEnabled = hasClip && !_isEditorBusy;
         ToolTransformButton.IsEnabled = hasClip && !_isEditorBusy;
         SaveEditedAsNewButton.IsEnabled = hasTimeline && !_isEditorBusy;

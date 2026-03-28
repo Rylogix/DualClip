@@ -6,6 +6,12 @@ namespace DualClip.App;
 
 public sealed class MainWindowViewModel : BindableObject
 {
+    private static readonly AudioDeviceDescriptor NoMicrophoneOption = new()
+    {
+        Id = string.Empty,
+        FriendlyName = "None",
+    };
+
     private SelectionOption<VideoQualityPreset>? _selectedVideoQuality;
     private SelectionOption<AudioCaptureMode>? _selectedAudioMode;
     private AudioDeviceDescriptor? _selectedMicrophone;
@@ -234,6 +240,7 @@ public sealed class MainWindowViewModel : BindableObject
         }
 
         Microphones.Clear();
+        Microphones.Add(NoMicrophoneOption);
 
         foreach (var microphone in microphones.OrderBy(item => item.FriendlyName, StringComparer.OrdinalIgnoreCase))
         {
@@ -242,7 +249,10 @@ public sealed class MainWindowViewModel : BindableObject
 
         SelectedVideoQuality = VideoQualities.FirstOrDefault(item => item.Value == config.VideoQuality) ?? VideoQualities.FirstOrDefault();
         SelectedAudioMode = AudioModes.FirstOrDefault(item => item.Value == config.AudioMode) ?? AudioModes.FirstOrDefault();
-        SelectedMicrophone = Microphones.FirstOrDefault(item => item.Id == config.MicrophoneDeviceId) ?? Microphones.FirstOrDefault();
+        SelectedMicrophone = !string.IsNullOrWhiteSpace(config.MicrophoneDeviceId)
+            ? Microphones.FirstOrDefault(item => string.Equals(item.Id, config.MicrophoneDeviceId, StringComparison.Ordinal))
+                ?? NoMicrophoneOption
+            : NoMicrophoneOption;
         ClipAudioVolumePercent = config.ClipAudioVolumePercent;
 
         ReplayLengthSecondsText = config.ReplayLengthSeconds.ToString();

@@ -23,8 +23,7 @@ public partial class MainWindow
         }
 
         if (key == Key.Z
-            && modifiers.HasFlag(ModifierKeys.Control)
-            && !modifiers.HasFlag(ModifierKeys.Alt)
+            && modifiers == ModifierKeys.None
             && TryUndoTimelineEdit())
         {
             e.Handled = true;
@@ -52,10 +51,7 @@ public partial class MainWindow
             return;
         }
 
-        if (key == Key.X
-            && modifiers.HasFlag(ModifierKeys.Control)
-            && !modifiers.HasFlag(ModifierKeys.Alt)
-            && !modifiers.HasFlag(ModifierKeys.Shift))
+        if (key == Key.X && modifiers == ModifierKeys.None)
         {
             SplitSegmentButton_Click(this, new RoutedEventArgs());
             e.Handled = true;
@@ -69,13 +65,6 @@ public partial class MainWindow
             return;
         }
 
-        if (key == Key.C && modifiers == ModifierKeys.None)
-        {
-            SetActiveTool(EditorToolMode.Crop);
-            e.Handled = true;
-            return;
-        }
-
         if (key == Key.R && modifiers == ModifierKeys.None)
         {
             ResetTransformButton_Click(this, new RoutedEventArgs());
@@ -83,20 +72,14 @@ public partial class MainWindow
             return;
         }
 
-        if (key == Key.C
-            && modifiers.HasFlag(ModifierKeys.Control)
-            && !modifiers.HasFlag(ModifierKeys.Alt)
-            && !modifiers.HasFlag(ModifierKeys.Shift))
+        if (key == Key.C && modifiers == ModifierKeys.None)
         {
             CopySegmentButton_Click(this, new RoutedEventArgs());
             e.Handled = true;
             return;
         }
 
-        if (key == Key.V
-            && modifiers.HasFlag(ModifierKeys.Control)
-            && !modifiers.HasFlag(ModifierKeys.Alt)
-            && !modifiers.HasFlag(ModifierKeys.Shift))
+        if (key == Key.V && modifiers == ModifierKeys.None)
         {
             PasteSegmentButton_Click(this, new RoutedEventArgs());
             e.Handled = true;
@@ -239,7 +222,11 @@ public partial class MainWindow
     private static bool IsTextInputFocused()
     {
         return Keyboard.FocusedElement is System.Windows.Controls.TextBox
-            or PasswordBox
+            or System.Windows.Controls.ComboBox
+            or System.Windows.Controls.ComboBoxItem
+            or System.Windows.Controls.Slider
+            or System.Windows.Controls.CheckBox
+            or System.Windows.Controls.PasswordBox
             or System.Windows.Controls.Primitives.TextBoxBase;
     }
 

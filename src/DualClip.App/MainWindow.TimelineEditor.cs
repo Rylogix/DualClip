@@ -247,8 +247,11 @@ public partial class MainWindow
             var segment = _timelineSegments[index];
             var start = GetSegmentTimelineStartSeconds(segment);
             var end = start + segment.DurationSeconds;
-            var left = TimeToTimelineX(start);
-            var right = TimeToTimelineX(end);
+            var displayStart = _isTimelineSegmentDragging && _didTimelineSegmentDragMove && ReferenceEquals(segment, _draggingTimelineSegment)
+                ? _timelineSegmentDragCurrentStartSeconds
+                : start;
+            var left = TimeToTimelineX(displayStart);
+            var right = TimeToTimelineX(displayStart + segment.DurationSeconds);
             var width = Math.Max(64, right - left);
             var segmentTitle = string.IsNullOrWhiteSpace(segment.SourceClipPath)
                 ? $"Clip {index + 1}"
@@ -279,7 +282,7 @@ public partial class MainWindow
             var border = new Border
             {
                 Width = width,
-                Height = 48,
+                Height = TimelineSegmentHeightPixels,
                 CornerRadius = new CornerRadius(8),
                 BorderBrush = ReferenceEquals(segment, _selectedTimelineSegment) ? accentBrush : borderBrush,
                 BorderThickness = ReferenceEquals(segment, _selectedTimelineSegment) ? new Thickness(1.5) : new Thickness(1),
@@ -287,6 +290,7 @@ public partial class MainWindow
                 Child = stack,
                 Cursor = System.Windows.Input.Cursors.SizeAll,
                 Tag = segment,
+                Opacity = _isTimelineSegmentDragging && ReferenceEquals(segment, _draggingTimelineSegment) ? 0.94d : 1d,
             };
 
             border.MouseLeftButtonDown += TimelineSegmentBorder_MouseLeftButtonDown;
@@ -294,8 +298,8 @@ public partial class MainWindow
             border.MouseLeftButtonUp += TimelineSegmentBorder_MouseLeftButtonUp;
             border.LostMouseCapture += TimelineSegmentBorder_LostMouseCapture;
             Canvas.SetLeft(border, left);
-            Canvas.SetTop(border, 18);
-            System.Windows.Controls.Panel.SetZIndex(border, 1);
+            Canvas.SetTop(border, TimelineSegmentTopPixels);
+            System.Windows.Controls.Panel.SetZIndex(border, _isTimelineSegmentDragging && ReferenceEquals(segment, _draggingTimelineSegment) ? 3 : 1);
             TimelineSegmentsCanvas.Children.Add(border);
         }
     }
@@ -348,6 +352,7 @@ public partial class MainWindow
         _timelineSegmentDragCurrentStartSeconds = Math.Clamp(_timelineSegmentDragOriginStartSeconds + TimelineDeltaToTime(deltaX), 0, GetTimelineDurationSeconds());
         _timelineSegmentDropIndex = GetTimelineSegmentDropIndex(_timelineSegmentDragCurrentStartSeconds, _draggingTimelineSegment);
         UpdateTimelineDropIndicator(GetTimelineDropTime(_timelineSegmentDropIndex, _draggingTimelineSegment));
+        RenderTimelineSegments();
     }
 
     private void TimelineSegmentBorder_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)

@@ -12,6 +12,34 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
+$logDir = Join-Path $repoRoot 'artifacts\logs'
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+$logTimestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$logPath = Join-Path $logDir "Build-NewExe-$logTimestamp.log"
+$transcriptStarted = $false
+
+try {
+    Start-Transcript -Path $logPath -Force | Out-Null
+    $transcriptStarted = $true
+}
+catch {
+    Write-Warning "Failed to start build transcript at '$logPath'. $_"
+}
+
+trap {
+    if ($transcriptStarted) {
+        try {
+            Stop-Transcript | Out-Null
+        }
+        catch {
+        }
+    }
+
+    throw
+}
+
+Write-Host "Build log: $logPath"
+
 $projectPath = Join-Path $repoRoot 'src\DualClip.App\DualClip.App.csproj'
 $publishDir = Join-Path $repoRoot 'publish\DualClip.SingleFile'
 $stagingPublishDir = Join-Path $repoRoot 'artifacts\publish-staging\DualClip.SingleFile'
@@ -83,3 +111,8 @@ Write-Host 'New exe created:'
 Write-Host "  Source:      $($sourceFile.FullName)"
 Write-Host "  Destination: $($outputFile.FullName)"
 Write-Host "  Size:        $([Math]::Round($outputFile.Length / 1MB, 2)) MB"
+Write-Host "  Log:         $logPath"
+
+if ($transcriptStarted) {
+    Stop-Transcript | Out-Null
+}
