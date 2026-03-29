@@ -3,6 +3,10 @@ setlocal
 
 cd /d "%~dp0"
 
+set "DUALCLIP_PACKAGE_NAME=Rylogix.DualClip"
+set "DUALCLIP_PACKAGE_PUBLISHER=CN=87B3C267-8985-4CA9-B2A8-54EFF3C074C7"
+set "DUALCLIP_PACKAGE_PUBLISHERDISPLAYNAME=Rylogix"
+
 if not "%~1"=="" (
     powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Release-DualClip.ps1" %*
     exit /b %errorlevel%

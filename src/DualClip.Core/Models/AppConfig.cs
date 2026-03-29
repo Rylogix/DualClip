@@ -28,6 +28,8 @@ public sealed class AppConfig
 
     public bool StartCaptureOnStartup { get; set; }
 
+    public bool LaunchOnStartup { get; set; }
+
     public string FfmpegPath { get; set; } = string.Empty;
 
     public HotkeyGesture HotkeyA { get; set; } = new()

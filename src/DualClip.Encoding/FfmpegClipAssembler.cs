@@ -431,7 +431,7 @@ public sealed class FfmpegClipAssembler
         var volumeMultiplier = Math.Clamp(clipAudioVolumePercent, 0d, 200d) / 100d;
         var duration = audioAlignment.TargetDurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
         var volumeText = volumeMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
-        return $"{BuildAlignedAudioTrackFilter(1, audioAlignment, "a0")}[a0]volume={volumeText}[aout]";
+        return $"{BuildAlignedAudioTrackFilter(1, audioAlignment, "a0")};[a0]volume={volumeText}[aout]";
     }
 
     private static string BuildMixedAudioAlignmentFilter(

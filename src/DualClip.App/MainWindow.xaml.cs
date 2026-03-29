@@ -34,16 +34,20 @@ public partial class MainWindow : Window
     private readonly MonitorEnumerationService _monitorService = new();
     private readonly GlobalHotkeyManager _hotkeyManager = new();
     private readonly AudioDeviceService _audioDeviceService = new();
+    private readonly StartupLaunchService _startupLaunchService = new();
     private readonly MainWindowViewModel _viewModel = new();
     private readonly FfmpegTimelineEditor _timelineEditor = new();
     private readonly ClipThumbnailCache _clipThumbnailCache = new();
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly DispatcherTimer _previewTimer;
+    private readonly DispatcherTimer _clipLibraryRefreshTimer;
     private readonly Dictionary<string, MonitorCaptureSession> _monitorSessionsByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _nextClipAllowedAtByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
+    private readonly HashSet<string> _monitorNodesRecovering = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _clipCooldownLock = new();
     private readonly object _clipDeleteQueueLock = new();
+    private readonly object _monitorRecoveryLock = new();
     private readonly Queue<QueuedClipDeletion> _clipDeleteQueue = new();
     private readonly HashSet<string> _pendingClipDeletionPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _settingsAutoSaveTimer;
@@ -51,7 +55,6 @@ public partial class MainWindow : Window
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
     private bool _hasShownTrayTip;
-    private bool _hasShownUpdateTip;
     private bool _isEditorBusy;
     private bool _isProcessingClipDeleteQueue;
     private bool _isUpdatingTransformControls;
@@ -115,6 +118,11 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(33),
         };
         _previewTimer.Tick += PreviewTimer_Tick;
+        _clipLibraryRefreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5),
+        };
+        _clipLibraryRefreshTimer.Tick += ClipLibraryRefreshTimer_Tick;
         UpdateWindowFrameState();
         UpdateEditorControlState();
         StartupDiagnostics.Write("MainWindow ctor completed.");
@@ -126,7 +134,20 @@ public partial class MainWindow : Window
     {
         StartupDiagnostics.Write("Window_Loaded entered.");
         await LoadStateAsync();
+        UpdateClipLibraryAutoRefreshState();
         StartupDiagnostics.Write("Window_Loaded completed.");
+    }
+
+    protected override void OnActivated(EventArgs e)
+    {
+        base.OnActivated(e);
+        UpdateClipLibraryAutoRefreshState();
+    }
+
+    protected override void OnDeactivated(EventArgs e)
+    {
+        base.OnDeactivated(e);
+        UpdateClipLibraryAutoRefreshState();
     }
 
     private void Window_SourceInitialized(object? sender, EventArgs e)
@@ -209,6 +230,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _previewTimer.Stop();
+        _clipLibraryRefreshTimer.Stop();
         _settingsAutoSaveTimer.Stop();
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged -= MonitorNodes_CollectionChanged;
@@ -310,6 +332,16 @@ public partial class MainWindow : Window
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
     {
         await InstallPendingUpdateAsync(isAutomatic: false);
+    }
+
+    private async void UpdateNowButton_Click(object sender, RoutedEventArgs e)
+    {
+        await InstallPendingUpdateAsync(isAutomatic: false);
+    }
+
+    private void UpdateLaterButton_Click(object sender, RoutedEventArgs e)
+    {
+        HideUpdateOverlay();
     }
 
     private void AddMonitorNodeButton_Click(object sender, RoutedEventArgs e)
@@ -428,7 +460,8 @@ public partial class MainWindow : Window
         try
         {
             var config = await _configStore.LoadAsync();
-            StartupDiagnostics.Write($"LoadStateAsync loaded config. StartCaptureOnStartup={config.StartCaptureOnStartup}.");
+            StartupDiagnostics.Write($"LoadStateAsync loaded config. StartCaptureOnStartup={config.StartCaptureOnStartup}, LaunchOnStartup={config.LaunchOnStartup}.");
+            ApplyLaunchOnStartupSetting(config.LaunchOnStartup);
             var monitors = _monitorService.GetMonitors();
             StartupDiagnostics.Write($"LoadStateAsync enumerated {monitors.Count} monitor(s).");
             var microphones = _audioDeviceService.GetMicrophones();
@@ -497,10 +530,17 @@ public partial class MainWindow : Window
 
         try
         {
+            if (_viewModel.IsCapturing)
+            {
+                StartupDiagnostics.Write("StartCaptureAsync detected an active capture session. Restarting capture.");
+                await StopCaptureAsync();
+            }
+
             var borderlessCaptureAllowed = await BorderlessCaptureAccessService.RequestAsync();
             StartupDiagnostics.Write($"StartCaptureAsync borderless access result: {borderlessCaptureAllowed}.");
             var config = BuildValidatedConfig();
             StartupDiagnostics.Write("StartCaptureAsync validated config.");
+            ApplyLaunchOnStartupSetting(config.LaunchOnStartup);
             await _configStore.SaveAsync(config);
             StartupDiagnostics.Write("StartCaptureAsync saved config.");
             foreach (var node in _viewModel.MonitorNodes)
@@ -722,6 +762,7 @@ public partial class MainWindow : Window
                 Directory.CreateDirectory(node.OutputFolder);
             }
 
+            ApplyLaunchOnStartupSetting(config.LaunchOnStartup);
             await _configStore.SaveAsync(config);
 
             if (_viewModel.IsCapturing)
@@ -748,6 +789,7 @@ public partial class MainWindow : Window
         {
             SetPendingUpdate(null, isUpdateAvailable: false);
             _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            HideUpdateOverlay();
             return;
         }
 
@@ -767,16 +809,20 @@ public partial class MainWindow : Window
             SetPendingUpdate(result.Release, result.IsUpdateAvailable);
             _viewModel.UpdateStatusText = result.StatusMessage;
 
-            if (result.IsUpdateAvailable && result.Release is not null && !_hasShownUpdateTip)
-            {
-                ShowUpdateAvailableNotification(result.Release);
-            }
-
             if (result.IsUpdateAvailable && result.Release is not null && installWhenAvailable)
             {
                 _viewModel.IsCheckingForUpdates = false;
                 await InstallReleaseUpdateAsync(result.Release, isAutomatic: true);
                 return;
+            }
+
+            if (result.IsUpdateAvailable && result.Release is not null)
+            {
+                ShowUpdateFoundOverlay(result.Release);
+            }
+            else
+            {
+                HideUpdateOverlay();
             }
         }
         catch (Exception ex)
@@ -785,6 +831,7 @@ public partial class MainWindow : Window
             _viewModel.UpdateStatusText = isManual
                 ? $"GitHub update check failed: {ex.Message}"
                 : "Automatic update check could not reach GitHub.";
+            HideUpdateOverlay();
         }
         finally
         {
@@ -813,6 +860,7 @@ public partial class MainWindow : Window
         if (_isPackagedApp)
         {
             _viewModel.UpdateStatusText = "This packaged build receives updates through Microsoft Store.";
+            HideUpdateOverlay();
             return;
         }
 
@@ -822,6 +870,7 @@ public partial class MainWindow : Window
         }
 
         _viewModel.IsCheckingForUpdates = true;
+        ShowUpdateBusyOverlay("Initializing...");
         _viewModel.UpdateStatusText = isAutomatic
             ? $"Update v{release.VersionText} found on GitHub. Installing automatically..."
             : $"Downloading v{release.VersionText} from GitHub...";
@@ -833,6 +882,7 @@ public partial class MainWindow : Window
             if (preparedUpdate is not null)
             {
                 StartupDiagnostics.Write($"Reusing staged update v{release.VersionText} from '{preparedUpdate.DownloadedAssetPath}'.");
+                ShowUpdateBusyOverlay("Initializing...");
                 _viewModel.UpdateStatusText = isAutomatic
                     ? $"Installing previously downloaded v{release.VersionText} and restarting DualClip..."
                     : $"Installing previously downloaded v{release.VersionText}...";
@@ -841,12 +891,15 @@ public partial class MainWindow : Window
             {
                 var progress = new Progress<double>(value =>
                 {
+                    ShowUpdateBusyOverlay($"Downloading... {value:P0}");
                     _viewModel.UpdateStatusText = $"Downloading v{release.VersionText} from GitHub... {value:P0}";
                 });
 
+                ShowUpdateBusyOverlay("Downloading...");
                 preparedUpdate = await _updateService.DownloadUpdateAsync(release, progress);
             }
 
+            ShowUpdateBusyOverlay("Installing...");
             await RestartForPreparedUpdateAsync(preparedUpdate);
         }
         catch (Exception ex)
@@ -854,6 +907,7 @@ public partial class MainWindow : Window
             _viewModel.UpdateStatusText = isAutomatic
                 ? $"Automatic update failed: {ex.Message}"
                 : $"Update install failed: {ex.Message}";
+            ShowUpdatePromptOverlay($"Update failed: {ex.Message}");
         }
         finally
         {
@@ -892,6 +946,7 @@ public partial class MainWindow : Window
 
     private async Task RestartForPreparedUpdateAsync(GitHubPreparedUpdate preparedUpdate)
     {
+        ShowUpdateBusyOverlay("Installing...");
         _viewModel.UpdateStatusText = $"Installing v{preparedUpdate.Release.VersionText} and restarting DualClip...";
 
         if (_viewModel.IsCapturing)
@@ -907,12 +962,32 @@ public partial class MainWindow : Window
         System.Windows.Application.Current.Shutdown();
     }
 
-    private void ShowUpdateAvailableNotification(GitHubUpdateRelease release)
+    private void ShowUpdateFoundOverlay(GitHubUpdateRelease release)
     {
-        _notifyIcon.BalloonTipTitle = "DualClip update available";
-        _notifyIcon.BalloonTipText = $"Version v{release.VersionText} is available. Open Settings to install it.";
-        _notifyIcon.ShowBalloonTip(4000);
-        _hasShownUpdateTip = true;
+        _viewModel.UpdateOverlayText = "Update found";
+        _viewModel.IsUpdateOverlayBusy = false;
+        _viewModel.IsUpdateOverlayVisible = true;
+    }
+
+    private void ShowUpdatePromptOverlay(string text)
+    {
+        _viewModel.UpdateOverlayText = text;
+        _viewModel.IsUpdateOverlayBusy = false;
+        _viewModel.IsUpdateOverlayVisible = true;
+    }
+
+    private void ShowUpdateBusyOverlay(string text)
+    {
+        _viewModel.UpdateOverlayText = text;
+        _viewModel.IsUpdateOverlayBusy = true;
+        _viewModel.IsUpdateOverlayVisible = true;
+    }
+
+    private void HideUpdateOverlay()
+    {
+        _viewModel.UpdateOverlayText = "Update found";
+        _viewModel.IsUpdateOverlayBusy = false;
+        _viewModel.IsUpdateOverlayVisible = false;
     }
 
     private AppConfig BuildValidatedConfig()
@@ -997,6 +1072,7 @@ public partial class MainWindow : Window
             OutputFolderB = monitorNodeConfigs.ElementAtOrDefault(1)?.OutputFolder ?? monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
             UseUnifiedOutputFolder = false,
             StartCaptureOnStartup = _viewModel.StartCaptureOnStartup,
+            LaunchOnStartup = _viewModel.LaunchOnStartup,
             FfmpegPath = _viewModel.FfmpegPath,
             HotkeyA = monitorNodeConfigs.ElementAtOrDefault(0)?.Hotkey ?? HotkeyGesture.Disabled(),
             HotkeyB = monitorNodeConfigs.ElementAtOrDefault(1)?.Hotkey ?? HotkeyGesture.Disabled(),
@@ -1029,6 +1105,23 @@ public partial class MainWindow : Window
             FpsTarget = config.FpsTarget,
             BufferDirectory = AppPaths.GetBufferDirectory($"monitor_{node.Id}"),
             PreferBorderlessCapture = preferBorderlessCapture,
+        });
+    }
+
+    private MonitorCaptureSession CreateReplacementSession(
+        MonitorNodeViewModel node,
+        MonitorCaptureSessionOptions previousOptions)
+    {
+        return new MonitorCaptureSession(new MonitorCaptureSessionOptions
+        {
+            SlotName = previousOptions.SlotName,
+            Monitor = node.SelectedMonitor ?? previousOptions.Monitor,
+            FfmpegPath = previousOptions.FfmpegPath,
+            BufferDirectory = previousOptions.BufferDirectory,
+            ReplayLengthSeconds = previousOptions.ReplayLengthSeconds,
+            FpsTarget = previousOptions.FpsTarget,
+            VideoQuality = previousOptions.VideoQuality,
+            PreferBorderlessCapture = previousOptions.PreferBorderlessCapture,
         });
     }
 
@@ -1065,11 +1158,13 @@ public partial class MainWindow : Window
     {
         _monitorNodesBySession[session] = node;
         session.StatusChanged += MonitorSession_StatusChanged;
+        session.RecoveryRequested += MonitorSession_RecoveryRequested;
     }
 
     private void UnsubscribeMonitorStatus(MonitorCaptureSession session)
     {
         session.StatusChanged -= MonitorSession_StatusChanged;
+        session.RecoveryRequested -= MonitorSession_RecoveryRequested;
         _monitorNodesBySession.Remove(session);
     }
 
@@ -1085,6 +1180,86 @@ public partial class MainWindow : Window
             node.Status = message;
             UpdateNotifyIconText();
         });
+    }
+
+    private void MonitorSession_RecoveryRequested(object? sender, MonitorCaptureRecoveryRequestedEventArgs e)
+    {
+        if (sender is not MonitorCaptureSession session || !_monitorNodesBySession.TryGetValue(session, out var node))
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(() => _ = RecoverMonitorSessionAsync(session, node, e.StaleDuration)));
+    }
+
+    private async Task RecoverMonitorSessionAsync(
+        MonitorCaptureSession staleSession,
+        MonitorNodeViewModel node,
+        TimeSpan staleDuration)
+    {
+        if (!_viewModel.IsCapturing || _isExitRequested)
+        {
+            return;
+        }
+
+        if (!_monitorSessionsByNodeId.TryGetValue(node.Id, out var currentSession)
+            || !ReferenceEquals(currentSession, staleSession))
+        {
+            return;
+        }
+
+        lock (_monitorRecoveryLock)
+        {
+            if (!_monitorNodesRecovering.Add(node.Id))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            var staleSeconds = Math.Max(1, (int)Math.Ceiling(staleDuration.TotalSeconds));
+            node.Status = $"{node.DisplayTitle} stopped receiving fresh frames for {staleSeconds}s. Restarting capture...";
+            StartupDiagnostics.Write($"RecoverMonitorSessionAsync restarting {node.DisplayTitle} after {staleSeconds}s without a new frame.");
+
+            _monitorSessionsByNodeId.Remove(node.Id);
+            UnsubscribeMonitorStatus(staleSession);
+            await staleSession.DisposeAsync();
+
+            if (!_viewModel.IsCapturing || _isExitRequested)
+            {
+                return;
+            }
+
+            var replacementSession = CreateReplacementSession(node, staleSession.Options);
+            SubscribeMonitorStatus(replacementSession, node);
+
+            try
+            {
+                await replacementSession.StartAsync();
+                _monitorSessionsByNodeId[node.Id] = replacementSession;
+                StartupDiagnostics.Write($"RecoverMonitorSessionAsync restarted {node.DisplayTitle} successfully.");
+            }
+            catch
+            {
+                UnsubscribeMonitorStatus(replacementSession);
+                await replacementSession.DisposeAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Write($"RecoverMonitorSessionAsync failed for {node.DisplayTitle}: {ex}");
+            node.Status = $"{node.DisplayTitle} recovery failed: {ex.Message}";
+            _viewModel.ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            lock (_monitorRecoveryLock)
+            {
+                _monitorNodesRecovering.Remove(node.Id);
+            }
+        }
     }
 
     private void SubscribeAudioStatus(AudioReplaySession session)
@@ -1292,10 +1467,16 @@ public partial class MainWindow : Window
             or nameof(MainWindowViewModel.SelectedMicrophone)
             or nameof(MainWindowViewModel.ClipAudioVolumePercent)
             or nameof(MainWindowViewModel.StartCaptureOnStartup)
+            or nameof(MainWindowViewModel.LaunchOnStartup)
             or nameof(MainWindowViewModel.FfmpegPath))
         {
             QueueSettingsAutoSave();
         }
+    }
+
+    private void ApplyLaunchOnStartupSetting(bool launchOnStartup)
+    {
+        _startupLaunchService.Apply(launchOnStartup);
     }
 
     private void QueueSettingsAutoSave()
@@ -1343,11 +1524,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshClipLibraryButton_Click(object sender, RoutedEventArgs e)
-    {
-        RefreshClipLibrary(GetSelectedClip()?.FilePath);
-    }
-
     private static string GetDefaultMonitorOutputFolder(int monitorNumber)
     {
         var videosRoot = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
@@ -1391,12 +1567,16 @@ public partial class MainWindow : Window
     {
         var selectedPath = preferredPath ?? GetSelectedClip()?.FilePath;
         var items = GetClipLibraryItems();
+        var clipLibraryChanged = HasClipLibraryChanged(items);
 
-        _viewModel.ClipLibrary.Clear();
-
-        foreach (var item in items)
+        if (clipLibraryChanged)
         {
-            _viewModel.ClipLibrary.Add(item);
+            _viewModel.ClipLibrary.Clear();
+
+            foreach (var item in items)
+            {
+                _viewModel.ClipLibrary.Add(item);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(selectedPath))
@@ -1413,7 +1593,34 @@ public partial class MainWindow : Window
         }
 
         UpdateEditorControlState();
-        StartClipLibraryThumbnailRefresh(items);
+
+        if (clipLibraryChanged)
+        {
+            StartClipLibraryThumbnailRefresh(items);
+        }
+    }
+
+    private bool HasClipLibraryChanged(IReadOnlyList<ClipLibraryItem> items)
+    {
+        if (_viewModel.ClipLibrary.Count != items.Count)
+        {
+            return true;
+        }
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            var current = _viewModel.ClipLibrary[index];
+            var next = items[index];
+
+            if (!string.Equals(current.FilePath, next.FilePath, StringComparison.OrdinalIgnoreCase)
+                || current.ModifiedAt != next.ModifiedAt
+                || current.FileSizeBytes != next.FileSizeBytes)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private IReadOnlyList<ClipLibraryItem> GetClipLibraryItems()
@@ -1463,6 +1670,45 @@ public partial class MainWindow : Window
         {
             return _pendingClipDeletionPaths.Contains(filePath);
         }
+    }
+
+    private void ClipLibraryRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!CanAutoRefreshClipLibrary())
+        {
+            UpdateClipLibraryAutoRefreshState();
+            return;
+        }
+
+        RefreshClipLibrary(GetSelectedClip()?.FilePath);
+    }
+
+    private void UpdateClipLibraryAutoRefreshState()
+    {
+        if (CanAutoRefreshClipLibrary())
+        {
+            if (!_clipLibraryRefreshTimer.IsEnabled)
+            {
+                _clipLibraryRefreshTimer.Start();
+            }
+
+            return;
+        }
+
+        if (_clipLibraryRefreshTimer.IsEnabled)
+        {
+            _clipLibraryRefreshTimer.Stop();
+        }
+    }
+
+    private bool CanAutoRefreshClipLibrary()
+    {
+        return IsLoaded
+            && IsVisible
+            && IsActive
+            && !_isLoadingSettings
+            && !_isEditorBusy
+            && !_viewModel.ClipLibrary.Any(item => item.IsRenaming);
     }
 
     private void StartClipLibraryThumbnailRefresh(IReadOnlyList<ClipLibraryItem> items)
@@ -1545,6 +1791,7 @@ public partial class MainWindow : Window
         }
 
         item.BeginRename();
+        UpdateClipLibraryAutoRefreshState();
     }
 
     private void ClipTitleRenameTextBox_Loaded(object sender, RoutedEventArgs e)
@@ -1588,6 +1835,7 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             item.CancelRename();
+            UpdateClipLibraryAutoRefreshState();
         }
     }
 
@@ -1603,6 +1851,7 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(proposedName))
         {
             item.CancelRename();
+            UpdateClipLibraryAutoRefreshState();
             _viewModel.ErrorMessage = "Clip name cannot be empty.";
             return;
         }
@@ -1610,6 +1859,7 @@ public partial class MainWindow : Window
         if (proposedName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         {
             item.CancelRename();
+            UpdateClipLibraryAutoRefreshState();
             _viewModel.ErrorMessage = "Clip name contains invalid file name characters.";
             return;
         }
@@ -1619,6 +1869,7 @@ public partial class MainWindow : Window
         var newPath = Path.Combine(directoryPath, $"{proposedName}{item.FileExtension}");
 
         item.EndRename();
+        UpdateClipLibraryAutoRefreshState();
 
         if (string.Equals(item.FilePath, newPath, StringComparison.Ordinal))
         {
@@ -1648,6 +1899,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             item.CancelRename();
+            UpdateClipLibraryAutoRefreshState();
             _viewModel.ErrorMessage = ex.Message;
         }
     }
@@ -2053,12 +2305,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        var clickX = e.GetPosition(TimelineCanvas).X;
-        _playheadSeconds = TimelineXToTime(clickX);
+        MovePlayheadToTimelineX(e.GetPosition(TimelineCanvas).X);
+    }
+
+    private void MovePlayheadToTimelineX(double timelineX)
+    {
+        _playheadSeconds = TimelineXToTime(timelineX);
+
         if (TryFindSegmentAtTimelineTime(_playheadSeconds, out var segment, out _, out _))
         {
             SelectTimelineSegment(segment);
         }
+
         SeekToPlayhead(updatePreviewPosition: true);
     }
 
@@ -2580,6 +2838,15 @@ public partial class MainWindow : Window
                 PreviewVideoPresenter.RenderTransform = System.Windows.Media.Transform.Identity;
             }
 
+            if (PreviewMediaHost is not null)
+            {
+                PreviewMediaHost.Width = 0;
+                PreviewMediaHost.Height = 0;
+                PreviewMediaHost.Margin = new Thickness(0);
+                PreviewMediaHost.RenderTransform = System.Windows.Media.Transform.Identity;
+                PreviewMediaHost.Opacity = 1d;
+            }
+
             if (TransformSelectionBorder is not null)
             {
                 TransformSelectionBorder.Visibility = Visibility.Collapsed;
@@ -2618,17 +2885,17 @@ public partial class MainWindow : Window
 
         CropSelectionBorder.Width = cropLocalRect.Width;
         CropSelectionBorder.Height = cropLocalRect.Height;
-        Canvas.SetLeft(CropSelectionBorder, cropLocalRect.X);
-        Canvas.SetTop(CropSelectionBorder, cropLocalRect.Y);
+        Canvas.SetLeft(CropSelectionBorder, 0);
+        Canvas.SetTop(CropSelectionBorder, 0);
 
-        PositionCropThumb(CropTopLeftThumb, cropLocalRect.Left, cropLocalRect.Top);
-        PositionCropThumb(CropTopRightThumb, cropLocalRect.Right, cropLocalRect.Top);
-        PositionCropThumb(CropBottomLeftThumb, cropLocalRect.Left, cropLocalRect.Bottom);
-        PositionCropThumb(CropBottomRightThumb, cropLocalRect.Right, cropLocalRect.Bottom);
-        PositionCropThumb(CropTopThumb, cropLocalRect.Left + (cropLocalRect.Width / 2d), cropLocalRect.Top);
-        PositionCropThumb(CropRightThumb, cropLocalRect.Right, cropLocalRect.Top + (cropLocalRect.Height / 2d));
-        PositionCropThumb(CropBottomThumb, cropLocalRect.Left + (cropLocalRect.Width / 2d), cropLocalRect.Bottom);
-        PositionCropThumb(CropLeftThumb, cropLocalRect.Left, cropLocalRect.Top + (cropLocalRect.Height / 2d));
+        PositionCropThumb(CropTopLeftThumb, 0, 0);
+        PositionCropThumb(CropTopRightThumb, cropLocalRect.Width, 0);
+        PositionCropThumb(CropBottomLeftThumb, 0, cropLocalRect.Height);
+        PositionCropThumb(CropBottomRightThumb, cropLocalRect.Width, cropLocalRect.Height);
+        PositionCropThumb(CropTopThumb, cropLocalRect.Width / 2d, 0);
+        PositionCropThumb(CropRightThumb, cropLocalRect.Width, cropLocalRect.Height / 2d);
+        PositionCropThumb(CropBottomThumb, cropLocalRect.Width / 2d, cropLocalRect.Height);
+        PositionCropThumb(CropLeftThumb, 0, cropLocalRect.Height / 2d);
 
         SetCropOverlayVisibility(Visibility.Visible);
         ApplyPreviewPresenterVisuals(cropLocalRect);
@@ -2686,6 +2953,7 @@ public partial class MainWindow : Window
         TimelineSegmentsCanvas.IsEnabled = hasTimeline;
         TimelineScrollViewer.IsEnabled = hasTimeline;
         UpdatePreviewPlaybackButtonVisualState();
+        UpdateClipLibraryAutoRefreshState();
     }
 
     private void UpdatePreviewPlaybackButtonVisualState()

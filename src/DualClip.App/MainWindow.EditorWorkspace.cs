@@ -533,17 +533,9 @@ public partial class MainWindow
             return;
         }
 
-        var cropWidth = Math.Max(1d, _cropRectSource.Width <= 0 ? _selectedClipWidth : _cropRectSource.Width);
-        var cropHeight = Math.Max(1d, _cropRectSource.Height <= 0 ? _selectedClipHeight : _cropRectSource.Height);
-        var scaleX = _selectedClipWidth / cropWidth;
-        var scaleY = _selectedClipHeight / cropHeight;
-        var scale = fillFrame ? Math.Max(scaleX, scaleY) : Math.Min(scaleX, scaleY);
-        _scalePercent = Math.Clamp(scale * 100d, 10d, 400d);
-
-        var cropCenterX = _cropRectSource.X + (cropWidth / 2d);
-        var cropCenterY = _cropRectSource.Y + (cropHeight / 2d);
-        _translateX = (_selectedClipWidth / 2d) - cropCenterX;
-        _translateY = (_selectedClipHeight / 2d) - cropCenterY;
+        _scalePercent = 100d;
+        _translateX = 0d;
+        _translateY = 0d;
     }
 
     private void StepBackButton_Click(object sender, RoutedEventArgs e)
@@ -591,52 +583,62 @@ public partial class MainWindow
 
     private void ApplyPreviewPresenterVisuals(Rect cropLocalRect)
     {
-        if (PreviewVideoPresenter is null || TransformSelectionBorder is null || TransformMoveThumb is null || CropOverlayCanvas is null)
+        if (PreviewVideoPresenter is null
+            || PreviewMediaHost is null
+            || TransformSelectionBorder is null
+            || TransformMoveThumb is null
+            || CropOverlayCanvas is null)
         {
             return;
         }
 
-        PreviewVideoPresenter.Width = _displayedVideoRect.Width;
-        PreviewVideoPresenter.Height = _displayedVideoRect.Height;
-        Canvas.SetLeft(PreviewVideoPresenter, _displayedVideoRect.X);
-        Canvas.SetTop(PreviewVideoPresenter, _displayedVideoRect.Y);
+        var presenterLeft = _displayedVideoRect.X + cropLocalRect.X;
+        var presenterTop = _displayedVideoRect.Y + cropLocalRect.Y;
+        var presenterWidth = Math.Max(1d, cropLocalRect.Width);
+        var presenterHeight = Math.Max(1d, cropLocalRect.Height);
 
-        PreviewVideoPresenter.Clip = _selectedTimelineSegment is null || !IsCropActive()
-            ? null
-            : new RectangleGeometry(cropLocalRect);
+        PreviewVideoPresenter.Width = presenterWidth;
+        PreviewVideoPresenter.Height = presenterHeight;
+        Canvas.SetLeft(PreviewVideoPresenter, presenterLeft);
+        Canvas.SetTop(PreviewVideoPresenter, presenterTop);
+        PreviewVideoPresenter.Clip = null;
+        PreviewVideoPresenter.RenderTransform = Transform.Identity;
+        PreviewVideoPresenter.Opacity = 1d;
 
         var transformGroup = BuildPreviewTransformGroup();
 
-        PreviewVideoPresenter.RenderTransformOrigin = new WpfPoint(0.5, 0.5);
-        PreviewVideoPresenter.RenderTransform = transformGroup;
-        PreviewVideoPresenter.Opacity = Math.Clamp(_opacityPercent / 100d, 0.01d, 1d);
+        PreviewMediaHost.Width = _displayedVideoRect.Width;
+        PreviewMediaHost.Height = _displayedVideoRect.Height;
+        PreviewMediaHost.Margin = new Thickness(-cropLocalRect.X, -cropLocalRect.Y, 0, 0);
+        PreviewMediaHost.RenderTransformOrigin = new WpfPoint(
+            Math.Clamp((_cropRectSource.X + (_cropRectSource.Width / 2d)) / Math.Max(1d, _selectedClipWidth), 0d, 1d),
+            Math.Clamp((_cropRectSource.Y + (_cropRectSource.Height / 2d)) / Math.Max(1d, _selectedClipHeight), 0d, 1d));
+        PreviewMediaHost.RenderTransform = transformGroup;
+        PreviewMediaHost.Opacity = Math.Clamp(_opacityPercent / 100d, 0.01d, 1d);
 
-        TransformSelectionBorder.Width = _displayedVideoRect.Width;
-        TransformSelectionBorder.Height = _displayedVideoRect.Height;
-        Canvas.SetLeft(TransformSelectionBorder, _displayedVideoRect.X);
-        Canvas.SetTop(TransformSelectionBorder, _displayedVideoRect.Y);
-        TransformSelectionBorder.RenderTransformOrigin = new WpfPoint(0.5, 0.5);
-        TransformSelectionBorder.RenderTransform = transformGroup.CloneCurrentValue();
+        TransformSelectionBorder.Width = presenterWidth;
+        TransformSelectionBorder.Height = presenterHeight;
+        Canvas.SetLeft(TransformSelectionBorder, presenterLeft);
+        Canvas.SetTop(TransformSelectionBorder, presenterTop);
+        TransformSelectionBorder.RenderTransform = Transform.Identity;
         TransformSelectionBorder.Visibility = _selectedTimelineSegment is not null && _viewModel.Editor.IsTransformToolActive
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        TransformMoveThumb.Width = _displayedVideoRect.Width;
-        TransformMoveThumb.Height = _displayedVideoRect.Height;
-        Canvas.SetLeft(TransformMoveThumb, _displayedVideoRect.X);
-        Canvas.SetTop(TransformMoveThumb, _displayedVideoRect.Y);
-        TransformMoveThumb.RenderTransformOrigin = new WpfPoint(0.5, 0.5);
-        TransformMoveThumb.RenderTransform = transformGroup.CloneCurrentValue();
+        TransformMoveThumb.Width = presenterWidth;
+        TransformMoveThumb.Height = presenterHeight;
+        Canvas.SetLeft(TransformMoveThumb, presenterLeft);
+        Canvas.SetTop(TransformMoveThumb, presenterTop);
+        TransformMoveThumb.RenderTransform = Transform.Identity;
         TransformMoveThumb.Visibility = _selectedTimelineSegment is not null && _viewModel.Editor.IsTransformToolActive
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-        CropOverlayCanvas.Width = _displayedVideoRect.Width;
-        CropOverlayCanvas.Height = _displayedVideoRect.Height;
-        Canvas.SetLeft(CropOverlayCanvas, _displayedVideoRect.X);
-        Canvas.SetTop(CropOverlayCanvas, _displayedVideoRect.Y);
-        CropOverlayCanvas.RenderTransformOrigin = new WpfPoint(0.5, 0.5);
-        CropOverlayCanvas.RenderTransform = transformGroup.CloneCurrentValue();
+        CropOverlayCanvas.Width = presenterWidth;
+        CropOverlayCanvas.Height = presenterHeight;
+        Canvas.SetLeft(CropOverlayCanvas, presenterLeft);
+        Canvas.SetTop(CropOverlayCanvas, presenterTop);
+        CropOverlayCanvas.RenderTransform = Transform.Identity;
 
         PositionCropShades(cropLocalRect);
     }
@@ -648,38 +650,10 @@ public partial class MainWindow
             return;
         }
 
-        var showCropShade = _selectedTimelineSegment is not null && (_viewModel.Editor.IsCropToolActive || IsCropActive());
-        var shadeVisibility = showCropShade ? Visibility.Visible : Visibility.Collapsed;
-
-        CropShadeTop.Visibility = shadeVisibility;
-        CropShadeLeft.Visibility = shadeVisibility;
-        CropShadeRight.Visibility = shadeVisibility;
-        CropShadeBottom.Visibility = shadeVisibility;
-
-        if (!showCropShade)
-        {
-            return;
-        }
-
-        CropShadeTop.Width = _displayedVideoRect.Width;
-        CropShadeTop.Height = Math.Max(0, cropLocalRect.Top);
-        Canvas.SetLeft(CropShadeTop, 0);
-        Canvas.SetTop(CropShadeTop, 0);
-
-        CropShadeBottom.Width = _displayedVideoRect.Width;
-        CropShadeBottom.Height = Math.Max(0, _displayedVideoRect.Height - cropLocalRect.Bottom);
-        Canvas.SetLeft(CropShadeBottom, 0);
-        Canvas.SetTop(CropShadeBottom, cropLocalRect.Bottom);
-
-        CropShadeLeft.Width = Math.Max(0, cropLocalRect.Left);
-        CropShadeLeft.Height = Math.Max(0, cropLocalRect.Height);
-        Canvas.SetLeft(CropShadeLeft, 0);
-        Canvas.SetTop(CropShadeLeft, cropLocalRect.Top);
-
-        CropShadeRight.Width = Math.Max(0, _displayedVideoRect.Width - cropLocalRect.Right);
-        CropShadeRight.Height = Math.Max(0, cropLocalRect.Height);
-        Canvas.SetLeft(CropShadeRight, cropLocalRect.Right);
-        Canvas.SetTop(CropShadeRight, cropLocalRect.Top);
+        CropShadeTop.Visibility = Visibility.Collapsed;
+        CropShadeLeft.Visibility = Visibility.Collapsed;
+        CropShadeRight.Visibility = Visibility.Collapsed;
+        CropShadeBottom.Visibility = Visibility.Collapsed;
     }
 
     private void TransformMoveThumb_DragStarted(object sender, DragStartedEventArgs e)
@@ -689,7 +663,7 @@ public partial class MainWindow
 
     private void TransformMoveThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        if (!TryGetPreviewScale(out var scaleX, out var scaleY))
+        if (!TryGetPreviewSourceDelta(e.HorizontalChange, e.VerticalChange, out var deltaX, out var deltaY))
         {
             return;
         }
@@ -699,8 +673,8 @@ public partial class MainWindow
             return;
         }
 
-        _translateX = Math.Clamp(_translateX + (e.HorizontalChange / scaleX), -_selectedClipWidth, _selectedClipWidth);
-        _translateY = Math.Clamp(_translateY + (e.VerticalChange / scaleY), -_selectedClipHeight, _selectedClipHeight);
+        _translateX = Math.Clamp(_translateX + deltaX, -_selectedClipWidth, _selectedClipWidth);
+        _translateY = Math.Clamp(_translateY + deltaY, -_selectedClipHeight, _selectedClipHeight);
         ApplyCurrentEditorStateToSelectedSegment();
         UpdateTransformControlsFromState();
         UpdateEditorVisuals();

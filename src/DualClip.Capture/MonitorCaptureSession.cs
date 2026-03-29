@@ -14,6 +14,8 @@ namespace DualClip.Capture;
 
 public sealed class MonitorCaptureSession : IAsyncDisposable
 {
+    private static readonly TimeSpan MaximumFrameStaleness = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan RecoveryRequestCooldown = TimeSpan.FromSeconds(30);
     private readonly FfmpegClipAssembler _clipAssembler = new();
     private readonly FfmpegSegmentWriter _segmentWriter = new();
     private readonly RollingSegmentBuffer _segmentBuffer;
@@ -36,6 +38,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     private SizeInt32 _captureSize;
     private readonly bool _preferBorderlessCapture;
     private int _disposeState;
+    private long _lastFrameArrivalTicksUtc;
+    private long _lastRecoveryRequestTicksUtc;
 
     public MonitorCaptureSession(MonitorCaptureSessionOptions options)
     {
@@ -53,6 +57,7 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     public bool IsRunning { get; private set; }
 
     public event EventHandler<string>? StatusChanged;
+    public event EventHandler<MonitorCaptureRecoveryRequestedEventArgs>? RecoveryRequested;
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -84,6 +89,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
         CreateFrameTextures(_captureSize);
         _segmentBuffer.Prepare();
         _segmentBuffer.Start();
+        Interlocked.Exchange(ref _lastFrameArrivalTicksUtc, DateTime.UtcNow.Ticks);
+        Interlocked.Exchange(ref _lastRecoveryRequestTicksUtc, 0);
 
         _captureCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
@@ -218,6 +225,14 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
                     $"No completed replay buffer segments are available yet for {Options.SlotName}. Wait at least a couple of seconds after starting capture.");
             }
 
+            if (TryGetNewestStableSegmentAge(segments, out var newestSegmentAge)
+                && newestSegmentAge >= MaximumFrameStaleness)
+            {
+                var staleSeconds = Math.Max(1, (int)Math.Ceiling(newestSegmentAge.TotalSeconds));
+                throw new InvalidOperationException(
+                    $"{Options.Monitor.DisplayName} has not produced a fresh frame for {staleSeconds}s. DualClip is restarting that monitor capture. Wait a few seconds and clip again.");
+            }
+
             var outputPath = Path.Combine(
                 outputDirectory,
                 $"DualClip_{Options.SlotName}_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
@@ -277,6 +292,12 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
 
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
+                if (TryGetFrameStaleness(out var staleDuration) && staleDuration >= MaximumFrameStaleness)
+                {
+                    RequestRecovery(staleDuration);
+                    continue;
+                }
+
                 if (!_hasCapturedFrame)
                 {
                     continue;
@@ -420,6 +441,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
                 using var frameTexture = Direct3D11Interop.CreateTexture2D(frame.Surface);
                 _d3dDevice.ImmediateContext.CopyResource(frameTexture, _latestTexture);
                 _hasCapturedFrame = true;
+                Interlocked.Exchange(ref _lastFrameArrivalTicksUtc, DateTime.UtcNow.Ticks);
+                Interlocked.Exchange(ref _lastRecoveryRequestTicksUtc, 0);
             }
         }
         catch (Exception ex)
@@ -467,5 +490,76 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     private void PublishStatus(string message)
     {
         StatusChanged?.Invoke(this, message);
+    }
+
+    private bool TryGetFrameStaleness(out TimeSpan staleDuration)
+    {
+        staleDuration = TimeSpan.Zero;
+        var lastFrameArrivalTicksUtc = Interlocked.Read(ref _lastFrameArrivalTicksUtc);
+
+        if (lastFrameArrivalTicksUtc <= 0)
+        {
+            return false;
+        }
+
+        staleDuration = DateTime.UtcNow - new DateTime(lastFrameArrivalTicksUtc, DateTimeKind.Utc);
+        return staleDuration > TimeSpan.Zero;
+    }
+
+    private void RequestRecovery(TimeSpan staleDuration)
+    {
+        var nowTicks = DateTime.UtcNow.Ticks;
+        var lastRequestTicksUtc = Interlocked.Read(ref _lastRecoveryRequestTicksUtc);
+
+        if (lastRequestTicksUtc > 0
+            && nowTicks - lastRequestTicksUtc < RecoveryRequestCooldown.Ticks)
+        {
+            return;
+        }
+
+        var observedTicks = Interlocked.CompareExchange(
+            ref _lastRecoveryRequestTicksUtc,
+            nowTicks,
+            lastRequestTicksUtc);
+
+        if (observedTicks != lastRequestTicksUtc)
+        {
+            return;
+        }
+
+        var staleSeconds = Math.Max(1, (int)Math.Ceiling(staleDuration.TotalSeconds));
+        PublishStatus($"{Options.Monitor.DisplayName} has not delivered a new frame for {staleSeconds}s. Restarting this monitor capture.");
+        RecoveryRequested?.Invoke(this, new MonitorCaptureRecoveryRequestedEventArgs(staleDuration));
+    }
+
+    private static bool TryGetNewestStableSegmentAge(IReadOnlyList<string> segments, out TimeSpan newestSegmentAge)
+    {
+        newestSegmentAge = TimeSpan.Zero;
+
+        if (segments.Count == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var newestSegmentTimeUtc = File.GetLastWriteTimeUtc(segments[^1]);
+
+            if (newestSegmentTimeUtc == DateTime.MinValue || newestSegmentTimeUtc == DateTime.MaxValue)
+            {
+                return false;
+            }
+
+            newestSegmentAge = DateTime.UtcNow - newestSegmentTimeUtc;
+            return newestSegmentAge > TimeSpan.Zero;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }

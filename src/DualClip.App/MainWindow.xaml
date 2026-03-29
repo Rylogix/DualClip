@@ -995,6 +995,24 @@
             <Setter Property="Height" Value="30" />
             <Setter Property="Margin" Value="10,0,0,0" />
         </Style>
+
+        <Style x:Key="UpdateOverlayActionPanelStyle" TargetType="FrameworkElement">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CanShowUpdateOverlayActions}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="UpdateOverlaySpinnerPanelStyle" TargetType="FrameworkElement">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CanShowUpdateOverlaySpinner}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
     <Border x:Name="WindowFrameBorder"
             Background="{StaticResource WindowBrush}"
@@ -1390,7 +1408,16 @@
                                       Content="Start clipping on startup" />
                             <TextBlock Margin="2,8,0,0"
                                        Foreground="{StaticResource MutedTextBrush}"
-                                       Text="Launch DualClip ready to begin clipping as soon as Windows starts it."
+                                       Text="Begin capture automatically whenever DualClip launches."
+                                       TextWrapping="Wrap" />
+                            <CheckBox Margin="22,12,0,0"
+                                      VerticalAlignment="Center"
+                                      Style="{StaticResource SettingsToggleSwitchStyle}"
+                                      IsChecked="{Binding LaunchOnStartup}"
+                                      Content="Launch DualClip on Windows startup" />
+                            <TextBlock Margin="24,8,0,0"
+                                       Foreground="{StaticResource MutedTextBrush}"
+                                       Text="Open DualClip automatically when you sign in to Windows."
                                        TextWrapping="Wrap" />
                             <Border Margin="0,12,0,0"
                                     Padding="12"
@@ -1522,7 +1549,6 @@
 
                             <DockPanel Grid.Row="0" Margin="0,0,0,4" LastChildFill="False">
                                 <TextBlock VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" Text="Clip Library" />
-                                <Button DockPanel.Dock="Right" Width="96" Height="28" Margin="8,0,0,0" Padding="0" Click="RefreshClipLibraryButton_Click" Content="Refresh" />
                             </DockPanel>
 
                             <Grid Grid.Row="1"
@@ -1728,7 +1754,7 @@
                                         <Slider x:Name="RotationSlider" Grid.Row="0" Grid.Column="1" Minimum="-180" Maximum="180" PreviewMouseLeftButtonDown="TransformSlider_PreviewMouseLeftButtonDown" PreviewKeyDown="TransformSlider_PreviewKeyDown" ValueChanged="TransformSlider_ValueChanged" />
                                         <TextBox x:Name="RotationTextBox" Grid.Row="0" Grid.Column="2" Margin="10,0,0,0" VerticalContentAlignment="Center" LostFocus="TransformTextBox_LostFocus" PreviewKeyDown="TransformTextBox_PreviewKeyDown" />
 
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,12,8,0" VerticalAlignment="Center" Style="{StaticResource InspectorLabelStyle}" Text="Scale" />
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="0,12,8,0" VerticalAlignment="Center" Style="{StaticResource InspectorLabelStyle}" Text="Zoom" />
                                         <Slider x:Name="ScaleSlider" Grid.Row="1" Grid.Column="1" Margin="0,12,0,0" Minimum="10" Maximum="400" PreviewMouseLeftButtonDown="TransformSlider_PreviewMouseLeftButtonDown" PreviewKeyDown="TransformSlider_PreviewKeyDown" ValueChanged="TransformSlider_ValueChanged" />
                                         <TextBox x:Name="ScaleTextBox" Grid.Row="1" Grid.Column="2" Margin="10,12,0,0" VerticalContentAlignment="Center" LostFocus="TransformTextBox_LostFocus" PreviewKeyDown="TransformTextBox_PreviewKeyDown" />
 
@@ -1902,7 +1928,7 @@
                                                   Style="{StaticResource EditorToolToggleButtonStyle}"
                                                   Click="EditorToolToggleButton_Click"
                                                   Tag="transform"
-                                                  ToolTip="Move, scale, rotate, and flip the selected segment"
+                                                  ToolTip="Move, zoom, rotate, and flip the selected segment"
                                                   Content="Transform" />
                                 </WrapPanel>
                             </Grid>
@@ -1940,9 +1966,12 @@
                                                     Background="Black"
                                                     BorderBrush="{StaticResource BorderBrushDark}"
                                                     BorderThickness="2"
+                                                    ClipToBounds="True"
                                                     CornerRadius="14"
                                                     SnapsToDevicePixels="True">
-                                                <Grid x:Name="PreviewMediaHost" />
+                                                <Grid x:Name="PreviewMediaHost"
+                                                      HorizontalAlignment="Left"
+                                                      VerticalAlignment="Top" />
                                             </Border>
 
                                             <Border x:Name="TransformSelectionBorder"
@@ -2111,12 +2140,12 @@
                                             <Canvas x:Name="TimelineRulerCanvas" Grid.Row="0" Height="28" Background="Transparent" />
 
                                             <Grid Grid.Row="1">
-                                                <Canvas x:Name="TimelineCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="1" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
+                                                <Canvas x:Name="TimelineCanvas" Height="110" Background="Transparent" Panel.ZIndex="1" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
                                                     <Rectangle x:Name="TimelineTrackRectangle" RadiusX="5" RadiusY="5" Height="10" Fill="{StaticResource PanelAltBrush}" />
                                                     <Rectangle x:Name="TrimSelectionRectangle" RadiusX="6" RadiusY="6" Height="10" Fill="{StaticResource AccentMutedBrush}" />
                                                 </Canvas>
-                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="2" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" />
-                                                <Canvas x:Name="TimelineOverlayCanvas" Height="110" Background="{x:Null}" Panel.ZIndex="3" SizeChanged="TimelineCanvas_SizeChanged">
+                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="110" Background="Transparent" Panel.ZIndex="2" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown" />
+                                                <Canvas x:Name="TimelineOverlayCanvas" Height="110" Background="Transparent" Panel.ZIndex="3" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
                                                     <Rectangle x:Name="TimelineDropIndicator" Width="3" Height="92" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" Visibility="Collapsed" Panel.ZIndex="0" />
                                                     <Rectangle x:Name="PlayheadLine" Width="2" Height="70" Fill="{StaticResource AccentBrush}" Panel.ZIndex="1" />
                                                     <Thumb x:Name="TrimStartThumb"
@@ -2172,6 +2201,101 @@
             </Border>
                 </Grid>
             </ScrollViewer>
+
+            <Grid Grid.RowSpan="2"
+                  Panel.ZIndex="20"
+                  Background="#B80A0F14"
+                  IsHitTestVisible="True">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsUpdateOverlayVisible}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+
+                <Border Margin="28"
+                        Padding="34,28"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="#D0151B22"
+                        BorderBrush="#66FFFFFF"
+                        BorderThickness="1"
+                        CornerRadius="18"
+                        MaxWidth="420">
+                    <StackPanel HorizontalAlignment="Center">
+                        <Grid Width="64"
+                              Height="64"
+                              Margin="0,0,0,18"
+                              Style="{StaticResource UpdateOverlaySpinnerPanelStyle}">
+                            <Grid.RenderTransform>
+                                <RotateTransform />
+                            </Grid.RenderTransform>
+                            <Grid.Triggers>
+                                <EventTrigger RoutedEvent="Loaded">
+                                    <BeginStoryboard>
+                                        <Storyboard RepeatBehavior="Forever">
+                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                             From="0"
+                                                             To="360"
+                                                             Duration="0:0:1.05" />
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </EventTrigger>
+                            </Grid.Triggers>
+                            <Ellipse Stroke="#33FFFFFF"
+                                     StrokeThickness="4" />
+                            <Ellipse Stroke="White"
+                                     StrokeThickness="4"
+                                     StrokeDashArray="2.4 6.2"
+                                     StrokeDashCap="Round" />
+                        </Grid>
+
+                        <TextBlock HorizontalAlignment="Center"
+                                   FontSize="28"
+                                   FontWeight="SemiBold"
+                                   Foreground="White"
+                                   Text="{Binding UpdateOverlayText}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock Margin="0,12,0,0"
+                                   HorizontalAlignment="Center"
+                                   Foreground="#CCFFFFFF"
+                                   Text="A new DualClip version is ready when you are."
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanShowUpdateOverlaySpinner}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <StackPanel Margin="0,24,0,0"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Center"
+                                    Style="{StaticResource UpdateOverlayActionPanelStyle}">
+                            <Button MinWidth="126"
+                                    Margin="0,0,12,0"
+                                    Click="UpdateNowButton_Click"
+                                    Content="Update Now" />
+                            <Button MinWidth="126"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Click="UpdateLaterButton_Click"
+                                    Content="Update Later" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Border>
 </Window>

@@ -27,12 +27,16 @@ public sealed class MainWindowViewModel : BindableObject
     private string _installUpdateButtonText = "Install Update";
     private string _updateNotesTitle = "Update Notes";
     private string _updateNotesText = string.Empty;
+    private string _updateOverlayText = "Update found";
     private bool _isCapturing;
     private bool _startCaptureOnStartup;
+    private bool _launchOnStartup;
     private bool _isSettingsTabSelected;
     private bool _isCheckingForUpdates;
     private bool _isUpdateAvailable;
     private bool _isPackagedApp;
+    private bool _isUpdateOverlayVisible;
+    private bool _isUpdateOverlayBusy;
 
     public MainWindowViewModel()
     {
@@ -118,6 +122,12 @@ public sealed class MainWindowViewModel : BindableObject
         set => SetProperty(ref _startCaptureOnStartup, value);
     }
 
+    public bool LaunchOnStartup
+    {
+        get => _launchOnStartup;
+        set => SetProperty(ref _launchOnStartup, value);
+    }
+
     public string AppStatus
     {
         get => _appStatus;
@@ -173,6 +183,42 @@ public sealed class MainWindowViewModel : BindableObject
     }
 
     public bool HasUpdateNotes => !string.IsNullOrWhiteSpace(UpdateNotesText);
+
+    public string UpdateOverlayText
+    {
+        get => _updateOverlayText;
+        set => SetProperty(ref _updateOverlayText, value);
+    }
+
+    public bool IsUpdateOverlayVisible
+    {
+        get => _isUpdateOverlayVisible;
+        set
+        {
+            if (SetProperty(ref _isUpdateOverlayVisible, value))
+            {
+                RaisePropertyChanged(nameof(CanShowUpdateOverlayActions));
+                RaisePropertyChanged(nameof(CanShowUpdateOverlaySpinner));
+            }
+        }
+    }
+
+    public bool IsUpdateOverlayBusy
+    {
+        get => _isUpdateOverlayBusy;
+        set
+        {
+            if (SetProperty(ref _isUpdateOverlayBusy, value))
+            {
+                RaisePropertyChanged(nameof(CanShowUpdateOverlayActions));
+                RaisePropertyChanged(nameof(CanShowUpdateOverlaySpinner));
+            }
+        }
+    }
+
+    public bool CanShowUpdateOverlayActions => IsUpdateOverlayVisible && !IsUpdateOverlayBusy;
+
+    public bool CanShowUpdateOverlaySpinner => IsUpdateOverlayVisible && IsUpdateOverlayBusy;
 
     public bool IsCapturing
     {
@@ -299,6 +345,7 @@ public sealed class MainWindowViewModel : BindableObject
         ReplayLengthSecondsText = config.ReplayLengthSeconds.ToString();
         FpsTargetText = config.FpsTarget.ToString();
         StartCaptureOnStartup = config.StartCaptureOnStartup;
+        LaunchOnStartup = config.LaunchOnStartup;
         FfmpegPath = config.FfmpegPath;
 
         var usedMonitorDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

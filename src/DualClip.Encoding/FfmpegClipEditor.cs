@@ -109,7 +109,7 @@ public sealed class FfmpegClipEditor
 
         if (request.ScalePercent <= 0)
         {
-            throw new InvalidOperationException("Scale must be greater than zero.");
+            throw new InvalidOperationException("Zoom must be greater than zero.");
         }
 
         if (request.OpacityPercent <= 0 || request.OpacityPercent > 100)
@@ -260,7 +260,7 @@ public sealed class FfmpegClipEditor
         var overlayY = $"(H-h)/2+{FormatNumber(request.TranslateY)}";
         return
             $"[0:v]{string.Join(",", clipFilters)}[fg];" +
-            $"color=c=black:s={sourceWidth}x{sourceHeight}:r={Math.Max(1, request.FpsTarget)}[bg];" +
+            $"color=c=black:s={cropWidth}x{cropHeight}:r={Math.Max(1, request.FpsTarget)}[bg];" +
             $"[bg][fg]overlay=x='{overlayX}':y='{overlayY}':format=auto,setsar=1[vout]";
     }
 

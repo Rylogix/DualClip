@@ -338,7 +338,7 @@ public partial class MainWindow
         }
 
         SelectTimelineSegment(segment);
-        _playheadSeconds = GetSegmentTimelineStartSeconds(segment);
+        MovePlayheadToTimelineX(e.GetPosition(TimelineCanvas).X);
         _draggingTimelineSegment = segment;
         _timelineSegmentDragStartPoint = e.GetPosition(TimelineSegmentsCanvas);
         _timelineSegmentDragOriginStartSeconds = segment.TimelineStartSeconds;
@@ -347,7 +347,6 @@ public partial class MainWindow
         _isTimelineSegmentDragging = true;
         _didTimelineSegmentDragMove = false;
         border.CaptureMouse();
-        SeekToPlayhead(updatePreviewPosition: true);
         e.Handled = true;
     }
 
