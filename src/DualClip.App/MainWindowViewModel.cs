@@ -45,7 +45,7 @@ public sealed class MainWindowViewModel : BindableObject
         VideoQualities.Add(new SelectionOption<VideoQualityPreset> { Label = "720p", Value = VideoQualityPreset.P720 });
 
         AudioModes.Add(new SelectionOption<AudioCaptureMode> { Label = "Disabled", Value = AudioCaptureMode.None });
-        AudioModes.Add(new SelectionOption<AudioCaptureMode> { Label = "System Audio", Value = AudioCaptureMode.System });
+        AudioModes.Add(new SelectionOption<AudioCaptureMode> { Label = "Desktop Audio", Value = AudioCaptureMode.System });
         AudioModes.Add(new SelectionOption<AudioCaptureMode> { Label = "Microphone", Value = AudioCaptureMode.Microphone });
     }
 
@@ -199,9 +199,9 @@ public sealed class MainWindowViewModel : BindableObject
 
     public bool CanRemoveMonitorNodes => MonitorNodes.Count > 1;
 
-    public bool IsMicrophoneSelectionEnabled => true;
+    public bool IsMicrophoneSelectionEnabled => SelectedAudioMode?.Value != AudioCaptureMode.None;
 
-    public bool IsClipAudioVolumeEnabled => true;
+    public bool IsClipAudioVolumeEnabled => SelectedAudioMode?.Value != AudioCaptureMode.None;
 
     public bool IsCheckingForUpdates
     {
@@ -287,8 +287,8 @@ public sealed class MainWindowViewModel : BindableObject
         }
 
         SelectedVideoQuality = VideoQualities.FirstOrDefault(item => item.Value == config.VideoQuality) ?? VideoQualities.FirstOrDefault();
-        SelectedAudioMode = AudioModes.FirstOrDefault(item => item.Value == AudioCaptureMode.System)
-            ?? AudioModes.FirstOrDefault(item => item.Value == config.AudioMode)
+        SelectedAudioMode = AudioModes.FirstOrDefault(item => item.Value == config.AudioMode)
+            ?? AudioModes.FirstOrDefault(item => item.Value == AudioCaptureMode.System)
             ?? AudioModes.FirstOrDefault();
         SelectedMicrophone = !string.IsNullOrWhiteSpace(config.MicrophoneDeviceId)
             ? Microphones.FirstOrDefault(item => string.Equals(item.Id, config.MicrophoneDeviceId, StringComparison.Ordinal))

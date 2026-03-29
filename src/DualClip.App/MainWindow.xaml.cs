@@ -46,6 +46,7 @@ public partial class MainWindow : Window
     private readonly object _clipDeleteQueueLock = new();
     private readonly Queue<QueuedClipDeletion> _clipDeleteQueue = new();
     private readonly HashSet<string> _pendingClipDeletionPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DispatcherTimer _settingsAutoSaveTimer;
     private readonly MediaElement _previewMediaElement;
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
@@ -54,6 +55,9 @@ public partial class MainWindow : Window
     private bool _isEditorBusy;
     private bool _isProcessingClipDeleteQueue;
     private bool _isUpdatingTransformControls;
+    private bool _isLoadingSettings;
+    private bool _isSavingSettings;
+    private bool _isSettingsSaveQueued;
     private double _selectedClipDurationSeconds;
     private int _selectedClipWidth;
     private int _selectedClipHeight;
@@ -101,6 +105,11 @@ public partial class MainWindow : Window
         StartupDiagnostics.Write("MainWindow notify icon created.");
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged += MonitorNodes_CollectionChanged;
+        _settingsAutoSaveTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(600),
+        };
+        _settingsAutoSaveTimer.Tick += SettingsAutoSaveTimer_Tick;
         _previewTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(33),
@@ -200,6 +209,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _previewTimer.Stop();
+        _settingsAutoSaveTimer.Stop();
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged -= MonitorNodes_CollectionChanged;
         _clipLibraryThumbnailCts?.Cancel();
@@ -207,6 +217,7 @@ public partial class MainWindow : Window
         foreach (var node in _viewModel.MonitorNodes)
         {
             node.PropertyChanged -= MonitorNode_PropertyChanged;
+            node.Hotkey.PropertyChanged -= MonitorNodeHotkey_PropertyChanged;
         }
         _hotkeyManager.HotkeyPressed -= HotkeyManager_HotkeyPressed;
         _hotkeyManager.Dispose();
@@ -291,11 +302,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void SaveSettingsButton_Click(object sender, RoutedEventArgs e)
-    {
-        await SaveSettingsAsync();
-    }
-
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
         await CheckForUpdatesAsync(isManual: true, installWhenAvailable: false);
@@ -308,17 +314,37 @@ public partial class MainWindow : Window
 
     private void AddMonitorNodeButton_Click(object sender, RoutedEventArgs e)
     {
-        var nodeNumber = _viewModel.MonitorNodes.Count + 1;
-        var videosRoot = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
-        var defaultFolder = Path.Combine(videosRoot, "DualClip", $"Monitor{nodeNumber}");
-        var node = new MonitorNodeViewModel(Guid.NewGuid().ToString("N"), $"Monitor {nodeNumber}", defaultFolder);
-        var preferredMonitor = _viewModel.Monitors.FirstOrDefault(monitor =>
+        var node = CreateMonitorNode(
+            _viewModel.MonitorNodes.Count + 1,
+            _viewModel.Monitors.FirstOrDefault(monitor =>
                 _viewModel.MonitorNodes.All(nodeVm => nodeVm.SelectedMonitor?.DeviceName != monitor.DeviceName))
-            ?? _viewModel.Monitors.FirstOrDefault();
+            ?? _viewModel.Monitors.FirstOrDefault());
 
-        node.SelectedMonitor = preferredMonitor;
-        node.LoadHotkey(HotkeyGesture.Disabled());
         _viewModel.MonitorNodes.Add(node);
+    }
+
+    private void AutoDetectMonitorsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var monitors = _monitorService.GetMonitors();
+            SetAvailableMonitors(monitors);
+
+            _viewModel.MonitorNodes.Clear();
+
+            for (var index = 0; index < _viewModel.Monitors.Count; index++)
+            {
+                _viewModel.MonitorNodes.Add(CreateMonitorNode(index + 1, _viewModel.Monitors[index]));
+            }
+
+            _viewModel.ErrorMessage = _viewModel.Monitors.Count == 0
+                ? "DualClip could not find any connected monitors."
+                : string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ErrorMessage = ex.Message;
+        }
     }
 
     private void RemoveMonitorNodeButton_Click(object sender, RoutedEventArgs e)
@@ -339,11 +365,44 @@ public partial class MainWindow : Window
             return;
         }
 
-        var selectedFolder = BrowseForFolder(node.OutputFolder);
+        SelectMonitorNodeOutputFolder(node);
+    }
 
-        if (!string.IsNullOrWhiteSpace(selectedFolder))
+    private void OutputFolderTextBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not MonitorNodeViewModel node)
         {
-            node.OutputFolder = selectedFolder;
+            return;
+        }
+
+        e.Handled = true;
+        SelectMonitorNodeOutputFolder(node);
+    }
+
+    private void OpenMonitorNodeOutputFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not MonitorNodeViewModel node)
+        {
+            return;
+        }
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(node.OutputFolder))
+            {
+                throw new InvalidOperationException($"Choose an output folder for {node.DisplayTitle} first.");
+            }
+
+            Directory.CreateDirectory(node.OutputFolder);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = node.OutputFolder,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ErrorMessage = ex.Message;
         }
     }
 
@@ -365,6 +424,7 @@ public partial class MainWindow : Window
     private async Task LoadStateAsync()
     {
         StartupDiagnostics.Write("LoadStateAsync entered.");
+        _isLoadingSettings = true;
         try
         {
             var config = await _configStore.LoadAsync();
@@ -424,6 +484,10 @@ public partial class MainWindow : Window
             _viewModel.AppStatus = "Failed to load initial state.";
             UpdateNotifyIconText();
         }
+        finally
+        {
+            _isLoadingSettings = false;
+        }
     }
 
     private async Task StartCaptureAsync()
@@ -445,8 +509,8 @@ public partial class MainWindow : Window
                 node.Status = $"{node.DisplayTitle} idle.";
             }
 
-            var audioSession = CreateSystemAudioSession(config);
-            var microphoneAudioSession = CreateMicrophoneAudioSession(config);
+            var audioSession = CreatePrimaryAudioSession(config);
+            var microphoneAudioSession = CreateSecondaryMicrophoneSession(config);
             var monitorSessions = _viewModel.MonitorNodes
                 .Select(node => (Node: node, Session: CreateSession(node, config, borderlessCaptureAllowed)))
                 .ToList();
@@ -924,7 +988,7 @@ public partial class MainWindow : Window
             ReplayLengthSeconds = replayLengthSeconds,
             FpsTarget = fpsTarget,
             VideoQuality = selectedVideoQuality,
-            AudioMode = AudioCaptureMode.System,
+            AudioMode = _viewModel.SelectedAudioMode?.Value ?? AudioCaptureMode.System,
             ClipAudioVolumePercent = clipAudioVolumePercent,
             MicrophoneDeviceId = string.IsNullOrWhiteSpace(_viewModel.SelectedMicrophone?.Id)
                 ? null
@@ -968,19 +1032,22 @@ public partial class MainWindow : Window
         });
     }
 
-    private AudioReplaySession CreateSystemAudioSession(AppConfig config)
+    private AudioReplaySession CreatePrimaryAudioSession(AppConfig config)
     {
         return new AudioReplaySession(new AudioReplaySessionOptions
         {
-            BufferDirectory = AppPaths.GetBufferDirectory("Audio"),
+            BufferDirectory = AppPaths.GetBufferDirectory(config.AudioMode == AudioCaptureMode.Microphone ? "Microphone" : "Audio"),
             ReplayLengthSeconds = config.ReplayLengthSeconds,
-            AudioMode = AudioCaptureMode.System,
+            AudioMode = config.AudioMode,
+            MicrophoneDeviceId = config.AudioMode == AudioCaptureMode.Microphone
+                ? config.MicrophoneDeviceId
+                : null,
         });
     }
 
-    private AudioReplaySession? CreateMicrophoneAudioSession(AppConfig config)
+    private AudioReplaySession? CreateSecondaryMicrophoneSession(AppConfig config)
     {
-        if (string.IsNullOrWhiteSpace(config.MicrophoneDeviceId))
+        if (config.AudioMode != AudioCaptureMode.System || string.IsNullOrWhiteSpace(config.MicrophoneDeviceId))
         {
             return null;
         }
@@ -1079,6 +1146,7 @@ public partial class MainWindow : Window
     private void HotkeyCaptureTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
         GetHotkeyEditorState(sender)?.EndRecording();
+        QueueSettingsAutoSave();
     }
 
     private void HotkeyCaptureTextBox_PreviewKeyDown(object sender, WpfKeyEventArgs e)
@@ -1159,6 +1227,7 @@ public partial class MainWindow : Window
         if (sender is FrameworkElement element && element.DataContext is HotkeyEditorState state)
         {
             state.Clear();
+            QueueSettingsAutoSave();
         }
     }
 
@@ -1169,6 +1238,7 @@ public partial class MainWindow : Window
             foreach (MonitorNodeViewModel node in e.OldItems)
             {
                 node.PropertyChanged -= MonitorNode_PropertyChanged;
+                node.Hotkey.PropertyChanged -= MonitorNodeHotkey_PropertyChanged;
             }
         }
 
@@ -1177,10 +1247,12 @@ public partial class MainWindow : Window
             foreach (MonitorNodeViewModel node in e.NewItems)
             {
                 node.PropertyChanged += MonitorNode_PropertyChanged;
+                node.Hotkey.PropertyChanged += MonitorNodeHotkey_PropertyChanged;
             }
         }
 
         RefreshClipLibrary(GetSelectedClip()?.FilePath);
+        QueueSettingsAutoSave();
     }
 
     private void MonitorNode_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -1188,6 +1260,21 @@ public partial class MainWindow : Window
         if (e.PropertyName is nameof(MonitorNodeViewModel.OutputFolder))
         {
             RefreshClipLibrary(GetSelectedClip()?.FilePath);
+        }
+
+        if (e.PropertyName is nameof(MonitorNodeViewModel.Name)
+            or nameof(MonitorNodeViewModel.SelectedMonitor)
+            or nameof(MonitorNodeViewModel.OutputFolder))
+        {
+            QueueSettingsAutoSave();
+        }
+    }
+
+    private void MonitorNodeHotkey_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is HotkeyEditorState state && !state.IsRecording)
+        {
+            QueueSettingsAutoSave();
         }
     }
 
@@ -1197,11 +1284,107 @@ public partial class MainWindow : Window
         {
             UpdateNotifyIconText();
         }
+
+        if (e.PropertyName is nameof(MainWindowViewModel.ReplayLengthSecondsText)
+            or nameof(MainWindowViewModel.FpsTargetText)
+            or nameof(MainWindowViewModel.SelectedVideoQuality)
+            or nameof(MainWindowViewModel.SelectedAudioMode)
+            or nameof(MainWindowViewModel.SelectedMicrophone)
+            or nameof(MainWindowViewModel.ClipAudioVolumePercent)
+            or nameof(MainWindowViewModel.StartCaptureOnStartup)
+            or nameof(MainWindowViewModel.FfmpegPath))
+        {
+            QueueSettingsAutoSave();
+        }
+    }
+
+    private void QueueSettingsAutoSave()
+    {
+        if (_isLoadingSettings)
+        {
+            return;
+        }
+
+        _isSettingsSaveQueued = true;
+
+        if (_isSavingSettings)
+        {
+            return;
+        }
+
+        _settingsAutoSaveTimer.Stop();
+        _settingsAutoSaveTimer.Start();
+    }
+
+    private async void SettingsAutoSaveTimer_Tick(object? sender, EventArgs e)
+    {
+        _settingsAutoSaveTimer.Stop();
+
+        if (_isLoadingSettings || _isSavingSettings || !_isSettingsSaveQueued)
+        {
+            return;
+        }
+
+        _isSettingsSaveQueued = false;
+        _isSavingSettings = true;
+
+        try
+        {
+            await SaveSettingsAsync();
+        }
+        finally
+        {
+            _isSavingSettings = false;
+
+            if (_isSettingsSaveQueued && !_isLoadingSettings)
+            {
+                _settingsAutoSaveTimer.Start();
+            }
+        }
     }
 
     private void RefreshClipLibraryButton_Click(object sender, RoutedEventArgs e)
     {
         RefreshClipLibrary(GetSelectedClip()?.FilePath);
+    }
+
+    private static string GetDefaultMonitorOutputFolder(int monitorNumber)
+    {
+        var videosRoot = Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
+        return Path.Combine(videosRoot, "DualClip", $"Monitor{monitorNumber}");
+    }
+
+    private void SelectMonitorNodeOutputFolder(MonitorNodeViewModel node)
+    {
+        var selectedFolder = BrowseForFolder(node.OutputFolder);
+
+        if (!string.IsNullOrWhiteSpace(selectedFolder))
+        {
+            node.OutputFolder = selectedFolder;
+            _viewModel.ErrorMessage = string.Empty;
+        }
+    }
+
+    private MonitorNodeViewModel CreateMonitorNode(int nodeNumber, MonitorDescriptor? selectedMonitor)
+    {
+        var node = new MonitorNodeViewModel(
+            Guid.NewGuid().ToString("N"),
+            $"Monitor {nodeNumber}",
+            GetDefaultMonitorOutputFolder(nodeNumber));
+
+        node.SelectedMonitor = selectedMonitor;
+        node.LoadHotkey(HotkeyGesture.Disabled());
+        return node;
+    }
+
+    private void SetAvailableMonitors(IReadOnlyList<MonitorDescriptor> monitors)
+    {
+        _viewModel.Monitors.Clear();
+
+        foreach (var monitor in monitors.OrderByDescending(item => item.IsPrimary).ThenBy(item => item.DeviceName))
+        {
+            _viewModel.Monitors.Add(monitor);
+        }
     }
 
     private void RefreshClipLibrary(string? preferredPath = null)
