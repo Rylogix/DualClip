@@ -618,13 +618,17 @@ public partial class MainWindow
         }
 
         CaptureTimelineUndoSnapshot();
+        PausePreviewPlayback();
         _timelineSegments.RemoveAt(index);
         NormalizeTimelineSegmentPositions();
 
         if (_timelineSegments.Count == 0)
         {
-            PausePreviewPlayback();
             _selectedTimelineSegment = null;
+            _draggingTimelineSegment = null;
+            _isTimelineSegmentDragging = false;
+            _didTimelineSegmentDragMove = false;
+            _timelineSegmentDropIndex = -1;
             _playheadSeconds = 0;
             _trimStartSeconds = 0;
             _trimEndSeconds = 0;
@@ -640,6 +644,7 @@ public partial class MainWindow
             _opacityPercent = 100d;
             _flipHorizontal = false;
             _flipVertical = false;
+            UpdateTimelineDropIndicator();
             UpdateZoomSlidersFromState();
             UpdateTransformControlsFromState();
             UpdateEditorVisuals();
@@ -649,6 +654,7 @@ public partial class MainWindow
 
         var nextIndex = Math.Clamp(index, 0, _timelineSegments.Count - 1);
         SelectTimelineSegment(_timelineSegments[nextIndex], movePlayheadToSegmentStart: true);
+        SeekToPlayhead(updatePreviewPosition: true);
         _viewModel.EditorStatus = "Deleted the selected segment.";
     }
 }

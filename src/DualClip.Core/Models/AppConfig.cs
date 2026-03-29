@@ -14,7 +14,7 @@ public sealed class AppConfig
 
     public VideoQualityPreset VideoQuality { get; set; } = VideoQualityPreset.Original;
 
-    public AudioCaptureMode AudioMode { get; set; } = AudioCaptureMode.None;
+    public AudioCaptureMode AudioMode { get; set; } = AudioCaptureMode.System;
 
     public string? MicrophoneDeviceId { get; set; }
 

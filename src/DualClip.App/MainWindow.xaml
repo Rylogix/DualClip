@@ -1327,7 +1327,6 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="130" />
@@ -1344,13 +1343,10 @@
                         <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Clip Quality" />
                         <ComboBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding VideoQualities}" SelectedItem="{Binding SelectedVideoQuality}" />
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Audio Source" />
-                        <ComboBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding AudioModes}" SelectedItem="{Binding SelectedAudioMode}" />
+                        <TextBlock Grid.Row="3" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Microphone" />
+                        <ComboBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding Microphones}" SelectedItem="{Binding SelectedMicrophone}" />
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,10" VerticalAlignment="Center" Text="Microphone" />
-                        <ComboBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,10" ItemsSource="{Binding Microphones}" SelectedItem="{Binding SelectedMicrophone}" />
-
-                        <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2">
+                        <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2">
                             <CheckBox VerticalAlignment="Center"
                                       Style="{StaticResource SettingsToggleSwitchStyle}"
                                       IsChecked="{Binding StartCaptureOnStartup}"

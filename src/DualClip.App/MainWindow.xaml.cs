@@ -74,6 +74,7 @@ public partial class MainWindow : Window
     private bool _flipHorizontal;
     private bool _flipVertical;
     private AudioReplaySession? _audioSession;
+    private AudioReplaySession? _microphoneAudioSession;
     private CancellationTokenSource? _clipLibraryThumbnailCts;
     private GitHubUpdateRelease? _pendingUpdate;
     private readonly bool _isPackagedApp = AppRuntimeInfo.IsPackaged;
@@ -444,17 +445,27 @@ public partial class MainWindow : Window
                 node.Status = $"{node.DisplayTitle} idle.";
             }
 
-            var audioSession = CreateAudioSession(config);
+            var audioSession = CreateSystemAudioSession(config);
+            var microphoneAudioSession = CreateMicrophoneAudioSession(config);
             var monitorSessions = _viewModel.MonitorNodes
                 .Select(node => (Node: node, Session: CreateSession(node, config, borderlessCaptureAllowed)))
                 .ToList();
 
             SubscribeAudioStatus(audioSession);
+            if (microphoneAudioSession is not null)
+            {
+                SubscribeAudioStatus(microphoneAudioSession);
+            }
 
             try
             {
                 await audioSession.StartAsync();
                 StartupDiagnostics.Write("StartCaptureAsync audio session started.");
+                if (microphoneAudioSession is not null)
+                {
+                    await microphoneAudioSession.StartAsync();
+                    StartupDiagnostics.Write("StartCaptureAsync microphone session started.");
+                }
 
                 foreach (var monitorSession in monitorSessions)
                 {
@@ -469,6 +480,10 @@ public partial class MainWindow : Window
             catch
             {
                 UnsubscribeAudioStatus(audioSession);
+                if (microphoneAudioSession is not null)
+                {
+                    UnsubscribeAudioStatus(microphoneAudioSession);
+                }
 
                 foreach (var monitorSession in monitorSessions)
                 {
@@ -477,10 +492,15 @@ public partial class MainWindow : Window
                 }
 
                 await audioSession.DisposeAsync();
+                if (microphoneAudioSession is not null)
+                {
+                    await microphoneAudioSession.DisposeAsync();
+                }
                 throw;
             }
 
             _audioSession = audioSession;
+            _microphoneAudioSession = microphoneAudioSession;
             _monitorSessionsByNodeId.Clear();
 
             foreach (var monitorSession in monitorSessions)
@@ -510,6 +530,8 @@ public partial class MainWindow : Window
         _monitorSessionsByNodeId.Clear();
         var audioSession = _audioSession;
         _audioSession = null;
+        var microphoneAudioSession = _microphoneAudioSession;
+        _microphoneAudioSession = null;
 
         foreach (var monitorSession in monitorSessions)
         {
@@ -523,6 +545,12 @@ public partial class MainWindow : Window
             await audioSession.DisposeAsync();
         }
 
+        if (microphoneAudioSession is not null)
+        {
+            UnsubscribeAudioStatus(microphoneAudioSession);
+            await microphoneAudioSession.DisposeAsync();
+        }
+
         _viewModel.IsCapturing = false;
         _viewModel.AppStatus = string.Empty;
         lock (_clipCooldownLock)
@@ -534,7 +562,8 @@ public partial class MainWindow : Window
 
     private async Task<string?> SaveMonitorNodeClipAsync(
         MonitorNodeViewModel node,
-        IReadOnlyList<string>? audioSegments = null,
+        IReadOnlyList<string>? systemAudioSegments = null,
+        IReadOnlyList<string>? microphoneAudioSegments = null,
         bool refreshClipLibrary = true,
         bool playQueuedSound = false)
     {
@@ -558,10 +587,12 @@ public partial class MainWindow : Window
 
         try
         {
-            var selectedAudioSegments = audioSegments ?? GetAudioSegments(monitorSession.Options.ReplayLengthSeconds);
+            var selectedSystemAudioSegments = systemAudioSegments ?? GetAudioSegments(monitorSession.Options.ReplayLengthSeconds);
+            var selectedMicrophoneAudioSegments = microphoneAudioSegments ?? GetMicrophoneAudioSegments(monitorSession.Options.ReplayLengthSeconds);
             var outputPath = await monitorSession.SaveClipAsync(
                 node.OutputFolder,
-                selectedAudioSegments,
+                selectedSystemAudioSegments,
+                selectedMicrophoneAudioSegments,
                 Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d));
             node.Status = $"Saved clip: {outputPath}";
 
@@ -593,11 +624,16 @@ public partial class MainWindow : Window
 
         var replayLengthSeconds = _monitorSessionsByNodeId[activeNodes[0].Id].Options.ReplayLengthSeconds;
         var audioSegments = GetAudioSegments(replayLengthSeconds);
+        var microphoneAudioSegments = GetMicrophoneAudioSegments(replayLengthSeconds);
         string? preferredPath = null;
 
         foreach (var node in activeNodes)
         {
-            var outputPath = await SaveMonitorNodeClipAsync(node, audioSegments, refreshClipLibrary: false);
+            var outputPath = await SaveMonitorNodeClipAsync(
+                node,
+                audioSegments,
+                microphoneAudioSegments,
+                refreshClipLibrary: false);
             if (!string.IsNullOrWhiteSpace(outputPath))
             {
                 preferredPath ??= outputPath;
@@ -846,8 +882,6 @@ public partial class MainWindow : Window
 
         var selectedVideoQuality = _viewModel.SelectedVideoQuality?.Value
             ?? throw new InvalidOperationException("Choose a clip quality before starting capture.");
-        var selectedAudioMode = _viewModel.SelectedAudioMode?.Value
-            ?? throw new InvalidOperationException("Choose an audio source before starting capture.");
         var clipAudioVolumePercent = (int)Math.Round(Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d), MidpointRounding.AwayFromZero);
 
         var seenMonitorDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -890,7 +924,7 @@ public partial class MainWindow : Window
             ReplayLengthSeconds = replayLengthSeconds,
             FpsTarget = fpsTarget,
             VideoQuality = selectedVideoQuality,
-            AudioMode = selectedAudioMode,
+            AudioMode = AudioCaptureMode.System,
             ClipAudioVolumePercent = clipAudioVolumePercent,
             MicrophoneDeviceId = string.IsNullOrWhiteSpace(_viewModel.SelectedMicrophone?.Id)
                 ? null
@@ -934,13 +968,28 @@ public partial class MainWindow : Window
         });
     }
 
-    private AudioReplaySession CreateAudioSession(AppConfig config)
+    private AudioReplaySession CreateSystemAudioSession(AppConfig config)
     {
         return new AudioReplaySession(new AudioReplaySessionOptions
         {
             BufferDirectory = AppPaths.GetBufferDirectory("Audio"),
             ReplayLengthSeconds = config.ReplayLengthSeconds,
-            AudioMode = config.AudioMode,
+            AudioMode = AudioCaptureMode.System,
+        });
+    }
+
+    private AudioReplaySession? CreateMicrophoneAudioSession(AppConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.MicrophoneDeviceId))
+        {
+            return null;
+        }
+
+        return new AudioReplaySession(new AudioReplaySessionOptions
+        {
+            BufferDirectory = AppPaths.GetBufferDirectory("Microphone"),
+            ReplayLengthSeconds = config.ReplayLengthSeconds,
+            AudioMode = AudioCaptureMode.Microphone,
             MicrophoneDeviceId = config.MicrophoneDeviceId,
         });
     }
@@ -1450,49 +1499,62 @@ public partial class MainWindow : Window
 
     private async void DeleteClipButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement element
-            || element.DataContext is not ClipLibraryItem item
-            || string.IsNullOrWhiteSpace(item.FilePath))
+        try
         {
-            return;
-        }
-
-        var filePath = item.FilePath;
-        var clipName = Path.GetFileName(filePath);
-        var shouldStartDeleteProcessor = false;
-
-        lock (_clipDeleteQueueLock)
-        {
-            if (!_pendingClipDeletionPaths.Add(filePath))
+            if (sender is not FrameworkElement element
+                || element.DataContext is not ClipLibraryItem item
+                || string.IsNullOrWhiteSpace(item.FilePath))
             {
                 return;
             }
 
-            _clipDeleteQueue.Enqueue(new QueuedClipDeletion
-            {
-                FilePath = filePath,
-                ClipName = clipName,
-            });
+            var filePath = item.FilePath;
+            var clipName = Path.GetFileName(filePath);
+            var shouldStartDeleteProcessor = false;
 
-            if (!_isProcessingClipDeleteQueue)
+            lock (_clipDeleteQueueLock)
             {
-                _isProcessingClipDeleteQueue = true;
-                shouldStartDeleteProcessor = true;
+                if (!_pendingClipDeletionPaths.Add(filePath))
+                {
+                    return;
+                }
+
+                _clipDeleteQueue.Enqueue(new QueuedClipDeletion
+                {
+                    FilePath = filePath,
+                    ClipName = clipName,
+                });
+
+                if (!_isProcessingClipDeleteQueue)
+                {
+                    _isProcessingClipDeleteQueue = true;
+                    shouldStartDeleteProcessor = true;
+                }
+            }
+
+            RemoveClipFromLibraryForQueuedDeletion(item);
+            _viewModel.ErrorMessage = string.Empty;
+            _viewModel.EditorStatus = BuildClipDeleteQueuedStatus(clipName);
+
+            if (shouldStartDeleteProcessor)
+            {
+                await ProcessQueuedClipDeletionsAsync();
             }
         }
-
-        RemoveClipFromLibraryForQueuedDeletion(item);
-        _viewModel.ErrorMessage = string.Empty;
-        _viewModel.EditorStatus = BuildClipDeleteQueuedStatus(clipName);
-
-        if (shouldStartDeleteProcessor)
+        catch (Exception ex)
         {
-            await ProcessQueuedClipDeletionsAsync();
+            _viewModel.ErrorMessage = ex.Message;
+            _viewModel.EditorStatus = $"Delete failed: {ex.Message}";
         }
     }
 
     private void RemoveClipFromLibraryForQueuedDeletion(ClipLibraryItem item)
     {
+        if (!_viewModel.ClipLibrary.Contains(item))
+        {
+            return;
+        }
+
         var selectedClip = GetSelectedClip();
         var deletedSelectedClip = string.Equals(selectedClip?.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase);
         var deletedIndex = _viewModel.ClipLibrary.IndexOf(item);
@@ -2763,6 +2825,11 @@ public partial class MainWindow : Window
         return _audioSession?.GetRecentStableSegments(replayLengthSeconds + AudioAlignmentContextSeconds) ?? [];
     }
 
+    private IReadOnlyList<string> GetMicrophoneAudioSegments(int replayLengthSeconds)
+    {
+        return _microphoneAudioSession?.GetRecentStableSegments(replayLengthSeconds + AudioAlignmentContextSeconds) ?? [];
+    }
+
     private Forms.NotifyIcon CreateNotifyIcon()
     {
         var contextMenu = new Forms.ContextMenuStrip();
@@ -2844,8 +2911,15 @@ public partial class MainWindow : Window
 
     private void ExitApplication()
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(ExitApplication));
+            return;
+        }
+
         _isExitRequested = true;
-        Close();
+        _notifyIcon.Visible = false;
+        System.Windows.Application.Current.Shutdown();
     }
 
     private void UpdateNotifyIconText()

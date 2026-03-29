@@ -20,6 +20,25 @@ public sealed class FfmpegClipAssembler
         string outputPath,
         CancellationToken cancellationToken)
     {
+        return await BuildClipAsync(
+            ffmpegPath,
+            segmentPaths,
+            audioSegmentPaths,
+            microphoneAudioSegmentPaths: null,
+            clipAudioVolumePercent,
+            outputPath,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<string> BuildClipAsync(
+        string ffmpegPath,
+        IReadOnlyList<string> segmentPaths,
+        IReadOnlyList<string>? audioSegmentPaths,
+        IReadOnlyList<string>? microphoneAudioSegmentPaths,
+        double clipAudioVolumePercent,
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
         if (segmentPaths.Count == 0)
         {
             throw new InvalidOperationException("No completed segment files were available yet.");
@@ -29,10 +48,13 @@ public sealed class FfmpegClipAssembler
 
         var tempVideoPath = Path.Combine(Path.GetTempPath(), $"dualclip_video_{Guid.NewGuid():N}.mp4");
         var tempAudioPath = Path.Combine(Path.GetTempPath(), $"dualclip_audio_{Guid.NewGuid():N}.m4a");
+        var tempMicrophoneAudioPath = Path.Combine(Path.GetTempPath(), $"dualclip_microphone_audio_{Guid.NewGuid():N}.m4a");
         var videoConcatPath = Path.Combine(Path.GetTempPath(), $"dualclip_video_concat_{Guid.NewGuid():N}.txt");
         var audioConcatPath = Path.Combine(Path.GetTempPath(), $"dualclip_audio_concat_{Guid.NewGuid():N}.txt");
+        var microphoneAudioConcatPath = Path.Combine(Path.GetTempPath(), $"dualclip_microphone_audio_concat_{Guid.NewGuid():N}.txt");
         var videoStageDirectory = Path.Combine(Path.GetTempPath(), $"dualclip_video_stage_{Guid.NewGuid():N}");
         var audioStageDirectory = Path.Combine(Path.GetTempPath(), $"dualclip_audio_stage_{Guid.NewGuid():N}");
+        var microphoneAudioStageDirectory = Path.Combine(Path.GetTempPath(), $"dualclip_microphone_audio_stage_{Guid.NewGuid():N}");
 
         try
         {
@@ -47,26 +69,24 @@ public sealed class FfmpegClipAssembler
             await File.WriteAllLinesAsync(videoConcatPath, stagedVideoSegments.Select(segment => BuildConcatLine(segment.Path)), cancellationToken).ConfigureAwait(false);
             await BuildVideoAsync(ffmpegPath, videoConcatPath, tempVideoPath, cancellationToken).ConfigureAwait(false);
 
-            if (audioSegmentPaths is null || audioSegmentPaths.Count == 0)
-            {
-                TryDelete(outputPath);
-                File.Move(tempVideoPath, outputPath, overwrite: true);
-                return outputPath;
-            }
+            var preparedAudioTrack = await PrepareAudioTrackAsync(
+                ffmpegPath,
+                audioSegmentPaths,
+                stagedVideoSegments,
+                audioConcatPath,
+                tempAudioPath,
+                audioStageDirectory,
+                cancellationToken).ConfigureAwait(false);
+            var preparedMicrophoneAudioTrack = await PrepareAudioTrackAsync(
+                ffmpegPath,
+                microphoneAudioSegmentPaths,
+                stagedVideoSegments,
+                microphoneAudioConcatPath,
+                tempMicrophoneAudioPath,
+                microphoneAudioStageDirectory,
+                cancellationToken).ConfigureAwait(false);
 
-            var audioSegments = ParseSegments(audioSegmentPaths);
-            var alignedAudioSegments = SelectAudioSegmentsForVideoWindow(audioSegments, stagedVideoSegments);
-
-            if (alignedAudioSegments.Count == 0)
-            {
-                TryDelete(outputPath);
-                File.Move(tempVideoPath, outputPath, overwrite: true);
-                return outputPath;
-            }
-
-            var stagedAudioSegments = await StageSegmentsAsync(alignedAudioSegments, audioStageDirectory, cancellationToken).ConfigureAwait(false);
-
-            if (stagedAudioSegments.Count == 0)
+            if (preparedAudioTrack is null && preparedMicrophoneAudioTrack is null)
             {
                 TryDelete(outputPath);
                 File.Move(tempVideoPath, outputPath, overwrite: true);
@@ -75,10 +95,29 @@ public sealed class FfmpegClipAssembler
 
             try
             {
-                var audioAlignment = BuildAudioAlignment(stagedVideoSegments, stagedAudioSegments);
-                await File.WriteAllLinesAsync(audioConcatPath, stagedAudioSegments.Select(segment => BuildConcatLine(segment.Path)), cancellationToken).ConfigureAwait(false);
-                await BuildAudioAsync(ffmpegPath, audioConcatPath, tempAudioPath, cancellationToken).ConfigureAwait(false);
-                await MuxAudioAsync(ffmpegPath, tempVideoPath, tempAudioPath, outputPath, audioAlignment, clipAudioVolumePercent, cancellationToken).ConfigureAwait(false);
+                if (preparedAudioTrack is not null && preparedMicrophoneAudioTrack is not null)
+                {
+                    await MuxMixedAudioAsync(
+                        ffmpegPath,
+                        tempVideoPath,
+                        preparedAudioTrack.Value,
+                        preparedMicrophoneAudioTrack.Value,
+                        outputPath,
+                        clipAudioVolumePercent,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var singleTrack = preparedAudioTrack ?? preparedMicrophoneAudioTrack!.Value;
+                    await MuxAudioAsync(
+                        ffmpegPath,
+                        tempVideoPath,
+                        singleTrack.Path,
+                        outputPath,
+                        singleTrack.Alignment,
+                        clipAudioVolumePercent,
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
             catch
             {
@@ -93,11 +132,49 @@ public sealed class FfmpegClipAssembler
         {
             TryDelete(videoConcatPath);
             TryDelete(audioConcatPath);
+            TryDelete(microphoneAudioConcatPath);
             TryDelete(tempVideoPath);
             TryDelete(tempAudioPath);
+            TryDelete(tempMicrophoneAudioPath);
             TryDeleteDirectory(videoStageDirectory);
             TryDeleteDirectory(audioStageDirectory);
+            TryDeleteDirectory(microphoneAudioStageDirectory);
         }
+    }
+
+    private async Task<PreparedAudioTrack?> PrepareAudioTrackAsync(
+        string ffmpegPath,
+        IReadOnlyList<string>? audioSegmentPaths,
+        IReadOnlyList<BufferedSegment> stagedVideoSegments,
+        string concatPath,
+        string outputPath,
+        string audioStageDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (audioSegmentPaths is null || audioSegmentPaths.Count == 0)
+        {
+            return null;
+        }
+
+        var audioSegments = ParseSegments(audioSegmentPaths);
+        var alignedAudioSegments = SelectAudioSegmentsForVideoWindow(audioSegments, stagedVideoSegments);
+
+        if (alignedAudioSegments.Count == 0)
+        {
+            return null;
+        }
+
+        var stagedAudioSegments = await StageSegmentsAsync(alignedAudioSegments, audioStageDirectory, cancellationToken).ConfigureAwait(false);
+
+        if (stagedAudioSegments.Count == 0)
+        {
+            return null;
+        }
+
+        var audioAlignment = BuildAudioAlignment(stagedVideoSegments, stagedAudioSegments);
+        await File.WriteAllLinesAsync(concatPath, stagedAudioSegments.Select(segment => BuildConcatLine(segment.Path)), cancellationToken).ConfigureAwait(false);
+        await BuildAudioAsync(ffmpegPath, concatPath, outputPath, cancellationToken).ConfigureAwait(false);
+        return new PreparedAudioTrack(outputPath, audioAlignment);
     }
 
     private async Task BuildVideoAsync(string ffmpegPath, string concatPath, string outputPath, CancellationToken cancellationToken)
@@ -190,6 +267,40 @@ public sealed class FfmpegClipAssembler
                 "-y",
                 "-i", videoPath,
                 "-i", audioPath,
+                "-filter_complex", audioFilter,
+                "-map", "0:v:0",
+                "-map", "[aout]",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                outputPath,
+            ],
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task MuxMixedAudioAsync(
+        string ffmpegPath,
+        string videoPath,
+        PreparedAudioTrack primaryTrack,
+        PreparedAudioTrack microphoneTrack,
+        string outputPath,
+        double clipAudioVolumePercent,
+        CancellationToken cancellationToken)
+    {
+        TryDelete(outputPath);
+
+        var audioFilter = BuildMixedAudioAlignmentFilter(primaryTrack.Alignment, microphoneTrack.Alignment, clipAudioVolumePercent);
+
+        await _runner.RunAsync(
+            ffmpegPath,
+            [
+                "-hide_banner",
+                "-loglevel", "warning",
+                "-y",
+                "-i", videoPath,
+                "-i", primaryTrack.Path,
+                "-i", microphoneTrack.Path,
                 "-filter_complex", audioFilter,
                 "-map", "0:v:0",
                 "-map", "[aout]",
@@ -320,20 +431,43 @@ public sealed class FfmpegClipAssembler
         var volumeMultiplier = Math.Clamp(clipAudioVolumePercent, 0d, 200d) / 100d;
         var duration = audioAlignment.TargetDurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
         var volumeText = volumeMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
+        return $"{BuildAlignedAudioTrackFilter(1, audioAlignment, "a0")}[a0]volume={volumeText}[aout]";
+    }
+
+    private static string BuildMixedAudioAlignmentFilter(
+        AudioAlignment primaryAlignment,
+        AudioAlignment microphoneAlignment,
+        double clipAudioVolumePercent)
+    {
+        var volumeMultiplier = Math.Clamp(clipAudioVolumePercent, 0d, 200d) / 100d;
+        var duration = Math.Max(primaryAlignment.TargetDurationSeconds, microphoneAlignment.TargetDurationSeconds)
+            .ToString("0.###", CultureInfo.InvariantCulture);
+        var volumeText = volumeMultiplier.ToString("0.###", CultureInfo.InvariantCulture);
+        return string.Concat(
+            BuildAlignedAudioTrackFilter(1, primaryAlignment, "a0"),
+            ";",
+            BuildAlignedAudioTrackFilter(2, microphoneAlignment, "a1"),
+            ";",
+            $"[a0][a1]amix=inputs=2:normalize=0,volume={volumeText},apad,atrim=duration={duration}[aout]");
+    }
+
+    private static string BuildAlignedAudioTrackFilter(int inputIndex, AudioAlignment audioAlignment, string outputLabel)
+    {
+        var duration = audioAlignment.TargetDurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
 
         if (audioAlignment.OffsetSeconds > 0.0005d)
         {
             var delayMilliseconds = Math.Max(0, (int)Math.Round(audioAlignment.OffsetSeconds * 1000d, MidpointRounding.AwayFromZero));
-            return $"[1:a]volume={volumeText},adelay={delayMilliseconds}:all=1,apad,atrim=duration={duration}[aout]";
+            return $"[{inputIndex}:a]adelay={delayMilliseconds}:all=1,apad,atrim=duration={duration}[{outputLabel}]";
         }
 
         if (audioAlignment.OffsetSeconds < -0.0005d)
         {
             var trimStart = Math.Abs(audioAlignment.OffsetSeconds).ToString("0.###", CultureInfo.InvariantCulture);
-            return $"[1:a]volume={volumeText},atrim=start={trimStart},asetpts=PTS-STARTPTS,apad,atrim=duration={duration}[aout]";
+            return $"[{inputIndex}:a]atrim=start={trimStart},asetpts=PTS-STARTPTS,apad,atrim=duration={duration}[{outputLabel}]";
         }
 
-        return $"[1:a]volume={volumeText},apad,atrim=duration={duration}[aout]";
+        return $"[{inputIndex}:a]apad,atrim=duration={duration}[{outputLabel}]";
     }
 
     private static bool TryGetSyntheticSegmentStart(
@@ -372,6 +506,8 @@ public sealed class FfmpegClipAssembler
     }
 
     private readonly record struct AudioAlignment(double OffsetSeconds, double TargetDurationSeconds);
+
+    private readonly record struct PreparedAudioTrack(string Path, AudioAlignment Alignment);
 
     private readonly record struct BufferedSegment(string Path, DateTime? Timestamp);
 

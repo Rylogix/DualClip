@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DualClip.Buffering;
 using DualClip.Core.Models;
@@ -184,7 +185,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
 
     public async Task<string> SaveClipAsync(
         string outputDirectory,
-        IReadOnlyList<string>? audioSegments = null,
+        IReadOnlyList<string>? systemAudioSegments = null,
+        IReadOnlyList<string>? microphoneAudioSegments = null,
         double clipAudioVolumePercent = 100d,
         CancellationToken cancellationToken = default)
     {
@@ -223,7 +225,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
             return await _clipAssembler.BuildClipAsync(
                 Options.FfmpegPath,
                 segments,
-                audioSegments,
+                systemAudioSegments,
+                microphoneAudioSegments,
                 clipAudioVolumePercent,
                 outputPath,
                 cancellationToken).ConfigureAwait(false);
@@ -268,6 +271,8 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
     {
         try
         {
+            var frameStopwatch = Stopwatch.StartNew();
+            long framesWritten = 0;
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1d / Options.FpsTarget));
 
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
@@ -284,7 +289,24 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
                     continue;
                 }
 
-                await _segmentWriter.WriteFrameAsync(currentFrame, cancellationToken).ConfigureAwait(false);
+                var expectedFrameCount = Math.Max(
+                    1L,
+                    (long)Math.Round(
+                        frameStopwatch.Elapsed.TotalSeconds * Options.FpsTarget,
+                        MidpointRounding.AwayFromZero));
+                var framesToWrite = expectedFrameCount - framesWritten;
+
+                if (framesToWrite <= 0)
+                {
+                    continue;
+                }
+
+                for (var index = 0L; index < framesToWrite; index++)
+                {
+                    await _segmentWriter.WriteFrameAsync(currentFrame, cancellationToken).ConfigureAwait(false);
+                }
+
+                framesWritten += framesToWrite;
             }
         }
         catch (OperationCanceledException)
