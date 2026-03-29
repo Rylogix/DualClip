@@ -15,6 +15,7 @@ public sealed class GitHubReleaseUpdateService
 {
     private const string RepositoryOwner = "Rylogix";
     private const string RepositoryName = "DualClip";
+    private const string RepositoryEndpoint = $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}";
     private const string LatestReleaseEndpoint = $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest";
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] PreferredAssetNames = ["DualClip.App.exe", "DualClip.exe"];
@@ -54,7 +55,7 @@ public sealed class GitHubReleaseUpdateService
             return new GitHubUpdateCheckResult(
                 IsUpdateAvailable: false,
                 Release: null,
-                StatusMessage: "No GitHub releases are published yet.");
+                StatusMessage: await ResolveMissingReleaseStatusAsync(cancellationToken).ConfigureAwait(false));
         }
 
         response.EnsureSuccessStatusCode();
@@ -301,6 +302,33 @@ public sealed class GitHubReleaseUpdateService
                 TryDeleteFile(downloadPath);
             }
         }
+    }
+
+    private async Task<string> ResolveMissingReleaseStatusAsync(CancellationToken cancellationToken)
+    {
+        using var repositoryRequest = new HttpRequestMessage(HttpMethod.Get, RepositoryEndpoint);
+        repositoryRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+        try
+        {
+            using var repositoryResponse = await _httpClient.SendAsync(
+                repositoryRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+
+            if (repositoryResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                return $"GitHub updates are unavailable because {RepositoryOwner}/{RepositoryName} is not publicly reachable. Publish releases from a public repo or update DualClip manually from {ReleasesUrl}.";
+            }
+
+            repositoryResponse.EnsureSuccessStatusCode();
+        }
+        catch (HttpRequestException)
+        {
+            return $"GitHub updates are unavailable because {RepositoryOwner}/{RepositoryName} could not be reached. Verify the repo visibility and release feed, or update DualClip manually from {ReleasesUrl}.";
+        }
+
+        return $"No stable GitHub release is published yet for {RepositoryOwner}/{RepositoryName}. Drafts, prereleases, and tags are ignored until a public release is published at {ReleasesUrl}.";
     }
 
     private static Version ResolveCurrentVersion()

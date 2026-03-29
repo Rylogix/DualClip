@@ -11,7 +11,7 @@
   <Identity
     Name="DualClip.Identity"
     Publisher="CN=DualClip Development"
-    Version="0.7.6.0"
+    Version="0.7.8.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

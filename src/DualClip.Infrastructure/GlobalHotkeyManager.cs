@@ -8,7 +8,7 @@ namespace DualClip.Infrastructure;
 public sealed class GlobalHotkeyManager : IDisposable
 {
     private const int WmHotkey = 0x0312;
-    private readonly Dictionary<int, string> _registrations = new();
+    private readonly Dictionary<int, HotkeyRegistration> _registrations = new();
     private HwndSource? _hwndSource;
     private nint _windowHandle;
     private int _nextId = 0x5000;
@@ -48,7 +48,39 @@ public sealed class GlobalHotkeyManager : IDisposable
                 $"Failed to register hotkey '{registrationName}'. Another application may already be using it.");
         }
 
-        _registrations.Add(registrationId, registrationName);
+        _registrations.Add(registrationId, new HotkeyRegistration(registrationId, registrationName, CloneGesture(gesture)));
+    }
+
+    public void ReplaceAll(IEnumerable<KeyValuePair<string, HotkeyGesture>> registrations)
+    {
+        UnregisterAll();
+
+        foreach (var registration in registrations)
+        {
+            Register(registration.Key, registration.Value);
+        }
+    }
+
+    public void RefreshAll()
+    {
+        EnsureAttached();
+
+        foreach (var registration in _registrations.Values.ToArray())
+        {
+            if (!UnregisterHotKey(_windowHandle, registration.Id))
+            {
+                continue;
+            }
+
+            var modifiers = (uint)(registration.Gesture.Modifiers | HotkeyModifiers.NoRepeat);
+
+            if (!RegisterHotKey(_windowHandle, registration.Id, modifiers, registration.Gesture.VirtualKey))
+            {
+                throw new Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    $"Failed to refresh hotkey '{registration.Name}'. Another application may already be using it.");
+            }
+        }
     }
 
     public void UnregisterAll()
@@ -96,14 +128,25 @@ public sealed class GlobalHotkeyManager : IDisposable
 
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
-        if (msg == WmHotkey && _registrations.TryGetValue(wParam.ToInt32(), out var registrationName))
+        if (msg == WmHotkey && _registrations.TryGetValue(wParam.ToInt32(), out var registration))
         {
-            HotkeyPressed?.Invoke(this, registrationName);
+            HotkeyPressed?.Invoke(this, registration.Name);
             handled = true;
         }
 
         return nint.Zero;
     }
+
+    private static HotkeyGesture CloneGesture(HotkeyGesture gesture)
+    {
+        return new HotkeyGesture
+        {
+            VirtualKey = gesture.VirtualKey,
+            Modifiers = gesture.Modifiers,
+        };
+    }
+
+    private sealed record HotkeyRegistration(int Id, string Name, HotkeyGesture Gesture);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);

@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly DispatcherTimer _previewTimer;
     private readonly DispatcherTimer _clipLibraryRefreshTimer;
+    private readonly DispatcherTimer _hotkeyHealthTimer;
     private readonly Dictionary<string, MonitorCaptureSession> _monitorSessionsByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTimeOffset> _nextClipAllowedAtByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
@@ -123,6 +124,11 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromSeconds(5),
         };
         _clipLibraryRefreshTimer.Tick += ClipLibraryRefreshTimer_Tick;
+        _hotkeyHealthTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(10),
+        };
+        _hotkeyHealthTimer.Tick += HotkeyHealthTimer_Tick;
         UpdateWindowFrameState();
         UpdateEditorControlState();
         StartupDiagnostics.Write("MainWindow ctor completed.");
@@ -231,6 +237,7 @@ public partial class MainWindow : Window
     {
         _previewTimer.Stop();
         _clipLibraryRefreshTimer.Stop();
+        _hotkeyHealthTimer.Stop();
         _settingsAutoSaveTimer.Stop();
         _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
         _viewModel.MonitorNodes.CollectionChanged -= MonitorNodes_CollectionChanged;
@@ -1082,11 +1089,78 @@ public partial class MainWindow : Window
 
     private void RegisterHotkeys(AppConfig config)
     {
-        _hotkeyManager.UnregisterAll();
+        _hotkeyManager.ReplaceAll(BuildHotkeyRegistrations(config.MonitorNodes));
+        UpdateHotkeyHealthTimerState();
+    }
 
-        foreach (var node in config.MonitorNodes.Where(node => node.Hotkey.IsEnabled))
+    private static IReadOnlyList<KeyValuePair<string, HotkeyGesture>> BuildHotkeyRegistrations(IEnumerable<MonitorNodeConfig> monitorNodes)
+    {
+        return monitorNodes
+            .Where(node => node.Hotkey.IsEnabled)
+            .Select(node => KeyValuePair.Create(BuildMonitorHotkeyRegistrationName(node.Id), node.Hotkey))
+            .ToList();
+    }
+
+    private void RefreshHotkeysFromViewModel()
+    {
+        if (!_viewModel.IsCapturing || IsAnyHotkeyEditorRecording())
         {
-            _hotkeyManager.Register(BuildMonitorHotkeyRegistrationName(node.Id), node.Hotkey);
+            return;
+        }
+
+        try
+        {
+            var hotkeyRegistrations = BuildHotkeyRegistrations(
+                _viewModel.MonitorNodes.Select(node => new MonitorNodeConfig
+                {
+                    Id = node.Id,
+                    Hotkey = node.Hotkey.ToModel(),
+                }));
+            _hotkeyManager.ReplaceAll(hotkeyRegistrations);
+            _viewModel.ErrorMessage = string.Empty;
+            UpdateHotkeyHealthTimerState();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ErrorMessage = ex.Message;
+        }
+    }
+
+    private void HotkeyHealthTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_viewModel.IsCapturing || IsAnyHotkeyEditorRecording())
+        {
+            UpdateHotkeyHealthTimerState();
+            return;
+        }
+
+        try
+        {
+            _hotkeyManager.RefreshAll();
+        }
+        catch
+        {
+            RefreshHotkeysFromViewModel();
+        }
+    }
+
+    private void UpdateHotkeyHealthTimerState()
+    {
+        var shouldRun = _viewModel.IsCapturing && !IsAnyHotkeyEditorRecording();
+
+        if (shouldRun)
+        {
+            if (!_hotkeyHealthTimer.IsEnabled)
+            {
+                _hotkeyHealthTimer.Start();
+            }
+
+            return;
+        }
+
+        if (_hotkeyHealthTimer.IsEnabled)
+        {
+            _hotkeyHealthTimer.Stop();
         }
     }
 
@@ -1427,6 +1501,7 @@ public partial class MainWindow : Window
         }
 
         RefreshClipLibrary(GetSelectedClip()?.FilePath);
+        RefreshHotkeysFromViewModel();
         QueueSettingsAutoSave();
     }
 
@@ -1449,6 +1524,7 @@ public partial class MainWindow : Window
     {
         if (sender is HotkeyEditorState state && !state.IsRecording)
         {
+            RefreshHotkeysFromViewModel();
             QueueSettingsAutoSave();
         }
     }
@@ -1458,6 +1534,7 @@ public partial class MainWindow : Window
         if (e.PropertyName is nameof(MainWindowViewModel.IsCapturing))
         {
             UpdateNotifyIconText();
+            UpdateHotkeyHealthTimerState();
         }
 
         if (e.PropertyName is nameof(MainWindowViewModel.ReplayLengthSecondsText)

@@ -14,8 +14,8 @@ namespace DualClip.Capture;
 
 public sealed class MonitorCaptureSession : IAsyncDisposable
 {
-    private static readonly TimeSpan MaximumFrameStaleness = TimeSpan.FromSeconds(90);
-    private static readonly TimeSpan RecoveryRequestCooldown = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaximumFrameStaleness = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan RecoveryRequestCooldown = TimeSpan.FromSeconds(10);
     private readonly FfmpegClipAssembler _clipAssembler = new();
     private readonly FfmpegSegmentWriter _segmentWriter = new();
     private readonly RollingSegmentBuffer _segmentBuffer;
@@ -223,6 +223,15 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
             {
                 throw new InvalidOperationException(
                     $"No completed replay buffer segments are available yet for {Options.SlotName}. Wait at least a couple of seconds after starting capture.");
+            }
+
+            if (TryGetFrameStaleness(out var frameStaleness)
+                && frameStaleness >= MaximumFrameStaleness)
+            {
+                RequestRecovery(frameStaleness);
+                var staleSeconds = Math.Max(1, (int)Math.Ceiling(frameStaleness.TotalSeconds));
+                throw new InvalidOperationException(
+                    $"{Options.Monitor.DisplayName} has not produced a fresh frame for {staleSeconds}s. DualClip is restarting that monitor capture. Wait a few seconds and clip again.");
             }
 
             if (TryGetNewestStableSegmentAge(segments, out var newestSegmentAge)
