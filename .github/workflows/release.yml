@@ -89,7 +89,7 @@ jobs:
         run: |
           .\scripts\Publish-DualClip-GitHubRelease.ps1 -Version "${{ steps.meta.outputs.version }}" -IncludeMsix
 
-          $assetPath = Join-Path $PWD "artifacts\github-release\${{ steps.meta.outputs.version }}\DualClip.App.exe"
+          $assetPath = Join-Path $PWD "artifacts\github-release\${{ steps.meta.outputs.version }}\DualClip.App-${{ steps.meta.outputs.version }}.exe"
           $msixPath = Join-Path $PWD "artifacts\github-release\${{ steps.meta.outputs.version }}\msix\DualClip-${{ steps.meta.outputs.version }}-x64.msix"
           $msixUploadPath = Join-Path $PWD "artifacts\github-release\${{ steps.meta.outputs.version }}\msix\DualClip-${{ steps.meta.outputs.version }}-x64.msixupload"
 

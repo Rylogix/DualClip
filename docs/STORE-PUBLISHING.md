@@ -5,16 +5,25 @@ DualClip now supports two release artifacts from the same codebase:
 - Portable GitHub release: `DualClip.App.exe`
 - Packaged release: `DualClip-<version>-x64.msix` and `DualClip-<version>-x64.msixupload`
 
-## What still needs to come from Partner Center
+## Checked-in Store identity
 
-Before submitting to Microsoft Store, set the real package identity values in GitHub Actions repository variables:
+The repo now defaults to the real Partner Center identity:
+
+- `Package/Identity/Name`: `Rylogix.DualClip`
+- `Package/Identity/Publisher`: `CN=87B3C267-8985-4CA9-B2A8-54EFF3C074C7`
+- `Package/Properties/DisplayName`: `DualClip`
+- `Package/Properties/PublisherDisplayName`: `Rylogix`
+
+GitHub Actions repository variables can still override these values if needed:
 
 - `DUALCLIP_PACKAGE_NAME`
 - `DUALCLIP_PACKAGE_PUBLISHER`
 - `DUALCLIP_PACKAGE_DISPLAYNAME`
 - `DUALCLIP_PACKAGE_PUBLISHERDISPLAYNAME`
 
-The checked-in defaults are development values only.
+Store metadata that is not sourced from this repo also needs to stay valid in Partner Center:
+
+- Website URL: `https://rylogix.com`
 
 ## Optional signing for CI MSIX builds
 
@@ -26,6 +35,10 @@ If you want the GitHub workflow to produce a signed MSIX, add these repository s
 `DUALCLIP_MSIX_CERT_BASE64` should be the base64-encoded contents of your `.pfx` signing certificate.
 
 If these secrets are not set, the workflow still builds the portable `.exe` and the Store upload bundle.
+
+## Local identity registration
+
+The local borderless-capture registration scripts now use the same package identity and generate a matching self-signed certificate for development installs.
 
 ## Local commands
 

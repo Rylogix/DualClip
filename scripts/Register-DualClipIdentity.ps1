@@ -9,6 +9,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$packageName = "Rylogix.DualClip"
+$publisher = "CN=87B3C267-8985-4CA9-B2A8-54EFF3C074C7"
+$certificateFileBaseName = "Rylogix.DualClip"
+
 function Get-RepoRoot {
     return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 }
@@ -80,12 +84,12 @@ function Ensure-SigningCertificate {
     $certRoot = Join-Path $RepoRoot "packaging\certs"
     New-Item -ItemType Directory -Path $certRoot -Force | Out-Null
 
-    $pfxPath = Join-Path $certRoot "DualClip.Identity.pfx"
-    $cerPath = Join-Path $certRoot "DualClip.Identity.cer"
+    $pfxPath = Join-Path $certRoot "$certificateFileBaseName.pfx"
+    $cerPath = Join-Path $certRoot "$certificateFileBaseName.cer"
     $passwordText = "dualclip-dev"
     $password = ConvertTo-SecureString -String $passwordText -AsPlainText -Force
 
-    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq "CN=DualClip Development" } | Sort-Object NotAfter -Descending | Select-Object -First 1
+    $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $publisher } | Sort-Object NotAfter -Descending | Select-Object -First 1
 
     $hasCodeSigningUsage = $false
 
@@ -103,7 +107,7 @@ function Ensure-SigningCertificate {
     if ($null -eq $cert) {
         $cert = New-SelfSignedCertificate `
             -Type CodeSigningCert `
-            -Subject "CN=DualClip Development" `
+            -Subject $publisher `
             -KeyAlgorithm RSA `
             -KeyLength 2048 `
             -HashAlgorithm SHA256 `
@@ -150,7 +154,7 @@ function Get-AppOutputPath {
 }
 
 function Remove-ExistingPackage {
-    $existing = Get-AppxPackage DualClip.Identity -ErrorAction SilentlyContinue
+    $existing = Get-AppxPackage $packageName -ErrorAction SilentlyContinue
 
     if ($null -ne $existing) {
         $existing | Remove-AppxPackage -ErrorAction Stop
@@ -175,7 +179,7 @@ $cert = Ensure-SigningCertificate -RepoRoot $repoRoot
 $artifactsRoot = Join-Path $repoRoot "artifacts\identity"
 New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
 
-$packagePath = Join-Path $artifactsRoot "DualClip.Identity.msix"
+$packagePath = Join-Path $artifactsRoot "$packageName.msix"
 
 if (Test-Path $packagePath) {
     Remove-Item $packagePath -Force
@@ -195,7 +199,7 @@ if ($ForceReinstall) {
     Remove-ExistingPackage
 }
 
-$existing = Get-AppxPackage DualClip.Identity -ErrorAction SilentlyContinue
+$existing = Get-AppxPackage $packageName -ErrorAction SilentlyContinue
 
 if ($null -eq $existing) {
     Add-AppxPackage -Path $packagePath -ExternalLocation $appOutput | Out-Null

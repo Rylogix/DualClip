@@ -417,6 +417,16 @@ public sealed class GitHubReleaseUpdateService
             }
         }
 
+        var versionedPreferredAsset = assets.FirstOrDefault(asset =>
+            asset.Name?.StartsWith("DualClip.App-", StringComparison.OrdinalIgnoreCase) == true &&
+            asset.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl));
+
+        if (versionedPreferredAsset is not null)
+        {
+            return versionedPreferredAsset;
+        }
+
         return assets.FirstOrDefault(asset =>
             asset.Name?.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) == true &&
             !string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl));

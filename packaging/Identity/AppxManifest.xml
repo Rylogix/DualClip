@@ -9,14 +9,14 @@
   IgnorableNamespaces="uap uap6 uap10 uap11 rescap">
 
   <Identity
-    Name="DualClip.Identity"
-    Publisher="CN=DualClip Development"
-    Version="0.7.8.0"
+    Name="Rylogix.DualClip"
+    Publisher="CN=87B3C267-8985-4CA9-B2A8-54EFF3C074C7"
+    Version="0.9.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>DualClip</DisplayName>
-    <PublisherDisplayName>DualClip</PublisherDisplayName>
+    <PublisherDisplayName>Rylogix</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
   </Properties>

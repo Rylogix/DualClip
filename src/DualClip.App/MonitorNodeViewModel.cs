@@ -8,6 +8,7 @@ public sealed class MonitorNodeViewModel : BindableObject
     private MonitorDescriptor? _selectedMonitor;
     private string _outputFolder;
     private string _status;
+    private bool _isCapturing;
 
     public MonitorNodeViewModel(string id, string name, string outputFolder)
     {
@@ -53,6 +54,26 @@ public sealed class MonitorNodeViewModel : BindableObject
         get => _status;
         set => SetProperty(ref _status, value);
     }
+
+    public bool IsCapturing
+    {
+        get => _isCapturing;
+        set
+        {
+            if (SetProperty(ref _isCapturing, value))
+            {
+                RaisePropertyChanged(nameof(CanStartClipping));
+                RaisePropertyChanged(nameof(CanStopClipping));
+                RaisePropertyChanged(nameof(CanSaveClip));
+            }
+        }
+    }
+
+    public bool CanStartClipping => !IsCapturing;
+
+    public bool CanStopClipping => IsCapturing;
+
+    public bool CanSaveClip => IsCapturing;
 
     public void LoadHotkey(HotkeyGesture hotkey)
     {

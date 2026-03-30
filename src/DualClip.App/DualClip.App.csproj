@@ -34,7 +34,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.20348.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.20348.0</SupportedOSPlatformVersion>
-    <Version>0.7.8</Version>
+    <Version>0.9.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\DualClip.ico</ApplicationIcon>
     <Nullable>enable</Nullable>

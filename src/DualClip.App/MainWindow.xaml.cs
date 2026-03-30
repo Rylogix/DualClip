@@ -323,6 +323,22 @@ public partial class MainWindow : Window
         await SaveAllMonitorClipsAsync();
     }
 
+    private async void ToggleMonitorNodeCaptureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement element || element.DataContext is not MonitorNodeViewModel node)
+        {
+            return;
+        }
+
+        if (node.IsCapturing)
+        {
+            await StopMonitorNodeCaptureAsync(node);
+            return;
+        }
+
+        await StartMonitorNodeCaptureAsync(node);
+    }
+
     private async void SaveMonitorNodeButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement element && element.DataContext is MonitorNodeViewModel node)
@@ -556,62 +572,42 @@ public partial class MainWindow : Window
                 node.Status = $"{node.DisplayTitle} idle.";
             }
 
-            var audioSession = CreatePrimaryAudioSession(config);
-            var microphoneAudioSession = CreateSecondaryMicrophoneSession(config);
-            var monitorSessions = _viewModel.MonitorNodes
-                .Select(node => (Node: node, Session: CreateSession(node, config, borderlessCaptureAllowed)))
-                .ToList();
-
-            SubscribeAudioStatus(audioSession);
-            if (microphoneAudioSession is not null)
-            {
-                SubscribeAudioStatus(microphoneAudioSession);
-            }
+            await EnsureSharedAudioSessionsAsync(config);
+            var monitorSessions = new List<(MonitorNodeViewModel Node, MonitorCaptureSession Session)>(_viewModel.MonitorNodes.Count);
 
             try
             {
-                await audioSession.StartAsync();
-                StartupDiagnostics.Write("StartCaptureAsync audio session started.");
-                if (microphoneAudioSession is not null)
+                foreach (var node in _viewModel.MonitorNodes)
                 {
-                    await microphoneAudioSession.StartAsync();
-                    StartupDiagnostics.Write("StartCaptureAsync microphone session started.");
-                }
+                    var monitorSession = CreateSession(node, config, borderlessCaptureAllowed);
+                    SubscribeMonitorStatus(monitorSession, node);
 
-                foreach (var monitorSession in monitorSessions)
-                {
-                    SubscribeMonitorStatus(monitorSession.Session, monitorSession.Node);
-                    await monitorSession.Session.StartAsync();
-                    StartupDiagnostics.Write($"StartCaptureAsync monitor session started for {monitorSession.Node.DisplayTitle}.");
+                    try
+                    {
+                        await monitorSession.StartAsync();
+                        monitorSessions.Add((node, monitorSession));
+                        StartupDiagnostics.Write($"StartCaptureAsync monitor session started for {node.DisplayTitle}.");
+                    }
+                    catch
+                    {
+                        UnsubscribeMonitorStatus(monitorSession);
+                        await monitorSession.DisposeAsync();
+                        throw;
+                    }
                 }
-
-                RegisterHotkeys(config);
-                StartupDiagnostics.Write("StartCaptureAsync hotkeys registered.");
             }
             catch
             {
-                UnsubscribeAudioStatus(audioSession);
-                if (microphoneAudioSession is not null)
-                {
-                    UnsubscribeAudioStatus(microphoneAudioSession);
-                }
-
                 foreach (var monitorSession in monitorSessions)
                 {
                     UnsubscribeMonitorStatus(monitorSession.Session);
                     await monitorSession.Session.DisposeAsync();
                 }
 
-                await audioSession.DisposeAsync();
-                if (microphoneAudioSession is not null)
-                {
-                    await microphoneAudioSession.DisposeAsync();
-                }
+                await StopSharedAudioSessionsAsync();
                 throw;
             }
 
-            _audioSession = audioSession;
-            _microphoneAudioSession = microphoneAudioSession;
             _monitorSessionsByNodeId.Clear();
 
             foreach (var monitorSession in monitorSessions)
@@ -619,7 +615,8 @@ public partial class MainWindow : Window
                 _monitorSessionsByNodeId[monitorSession.Node.Id] = monitorSession.Session;
             }
 
-            _viewModel.IsCapturing = true;
+            UpdateCaptureState();
+            RefreshHotkeysFromViewModel();
             _viewModel.AppStatus = string.Empty;
             UpdateNotifyIconText();
             StartupDiagnostics.Write("StartCaptureAsync completed successfully.");
@@ -637,18 +634,202 @@ public partial class MainWindow : Window
     {
         _hotkeyManager.UnregisterAll();
 
-        var monitorSessions = _monitorSessionsByNodeId.Values.Distinct().ToList();
+        var monitorSessions = _monitorSessionsByNodeId.ToList();
         _monitorSessionsByNodeId.Clear();
+        lock (_monitorRecoveryLock)
+        {
+            _monitorNodesRecovering.Clear();
+        }
+
+        foreach (var monitorSession in monitorSessions)
+        {
+            UnsubscribeMonitorStatus(monitorSession.Value);
+            await monitorSession.Value.DisposeAsync();
+        }
+
+        foreach (var node in _viewModel.MonitorNodes)
+        {
+            node.Status = $"{node.DisplayTitle} idle.";
+        }
+
+        await StopSharedAudioSessionsAsync();
+
+        UpdateCaptureState();
+        _viewModel.AppStatus = string.Empty;
+        lock (_clipCooldownLock)
+        {
+            _nextClipAllowedAtByNodeId.Clear();
+        }
+        UpdateNotifyIconText();
+    }
+
+    private async Task StartMonitorNodeCaptureAsync(MonitorNodeViewModel node)
+    {
+        StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync entered for {node.DisplayTitle}.");
+        _viewModel.ErrorMessage = string.Empty;
+
+        if (_monitorSessionsByNodeId.ContainsKey(node.Id))
+        {
+            return;
+        }
+
+        try
+        {
+            var captureNodes = _viewModel.MonitorNodes
+                .Where(item => item.IsCapturing || ReferenceEquals(item, node))
+                .ToList();
+            var config = BuildValidatedCaptureConfig(captureNodes);
+            var borderlessCaptureAllowed = await BorderlessCaptureAccessService.RequestAsync();
+            Directory.CreateDirectory(node.OutputFolder);
+            node.Status = $"{node.DisplayTitle} idle.";
+
+            await EnsureSharedAudioSessionsAsync(config);
+
+            var session = CreateSession(node, config, borderlessCaptureAllowed);
+            SubscribeMonitorStatus(session, node);
+
+            try
+            {
+                await session.StartAsync();
+            }
+            catch
+            {
+                UnsubscribeMonitorStatus(session);
+                await session.DisposeAsync();
+                if (_monitorSessionsByNodeId.Count == 0)
+                {
+                    await StopSharedAudioSessionsAsync();
+                }
+
+                throw;
+            }
+
+            _monitorSessionsByNodeId[node.Id] = session;
+            UpdateCaptureState();
+            RefreshHotkeysFromViewModel();
+            _viewModel.AppStatus = string.Empty;
+            UpdateNotifyIconText();
+            StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync completed for {node.DisplayTitle}.");
+        }
+        catch (Exception ex)
+        {
+            StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync failed for {node.DisplayTitle}: {ex}");
+            _viewModel.ErrorMessage = ex.Message;
+            _viewModel.AppStatus = "Capture did not start.";
+            UpdateNotifyIconText();
+        }
+    }
+
+    private async Task StopMonitorNodeCaptureAsync(MonitorNodeViewModel node)
+    {
+        StartupDiagnostics.Write($"StopMonitorNodeCaptureAsync entered for {node.DisplayTitle}.");
+
+        if (!_monitorSessionsByNodeId.Remove(node.Id, out var session))
+        {
+            var cancelledRecovery = false;
+            lock (_monitorRecoveryLock)
+            {
+                cancelledRecovery = _monitorNodesRecovering.Remove(node.Id);
+            }
+
+            if (cancelledRecovery)
+            {
+                _hotkeyManager.UnregisterAll();
+                node.Status = $"{node.DisplayTitle} idle.";
+                node.IsCapturing = false;
+                ClearClipCooldown(node.Id);
+                UpdateCaptureState();
+                RefreshHotkeysFromViewModel();
+                await StopSharedAudioSessionsIfIdleAsync();
+                UpdateNotifyIconText();
+            }
+
+            return;
+        }
+
+        _hotkeyManager.UnregisterAll();
+
+        lock (_monitorRecoveryLock)
+        {
+            _monitorNodesRecovering.Remove(node.Id);
+        }
+
+        UnsubscribeMonitorStatus(session);
+        await session.DisposeAsync();
+
+        node.Status = $"{node.DisplayTitle} idle.";
+        ClearClipCooldown(node.Id);
+
+        await StopSharedAudioSessionsIfIdleAsync();
+        UpdateCaptureState();
+        RefreshHotkeysFromViewModel();
+        _viewModel.AppStatus = string.Empty;
+        UpdateNotifyIconText();
+        StartupDiagnostics.Write($"StopMonitorNodeCaptureAsync completed for {node.DisplayTitle}.");
+    }
+
+    private async Task EnsureSharedAudioSessionsAsync(AppConfig config)
+    {
+        if (_audioSession is not null)
+        {
+            return;
+        }
+
+        var audioSession = CreatePrimaryAudioSession(config);
+        var microphoneAudioSession = CreateSecondaryMicrophoneSession(config);
+        SubscribeAudioStatus(audioSession);
+        if (microphoneAudioSession is not null)
+        {
+            SubscribeAudioStatus(microphoneAudioSession);
+        }
+
+        try
+        {
+            await audioSession.StartAsync();
+            StartupDiagnostics.Write("EnsureSharedAudioSessionsAsync audio session started.");
+            if (microphoneAudioSession is not null)
+            {
+                await microphoneAudioSession.StartAsync();
+                StartupDiagnostics.Write("EnsureSharedAudioSessionsAsync microphone session started.");
+            }
+        }
+        catch
+        {
+            UnsubscribeAudioStatus(audioSession);
+            if (microphoneAudioSession is not null)
+            {
+                UnsubscribeAudioStatus(microphoneAudioSession);
+            }
+
+            await audioSession.DisposeAsync();
+            if (microphoneAudioSession is not null)
+            {
+                await microphoneAudioSession.DisposeAsync();
+            }
+
+            throw;
+        }
+
+        _audioSession = audioSession;
+        _microphoneAudioSession = microphoneAudioSession;
+    }
+
+    private async Task StopSharedAudioSessionsIfIdleAsync()
+    {
+        if (_monitorSessionsByNodeId.Count > 0)
+        {
+            return;
+        }
+
+        await StopSharedAudioSessionsAsync();
+    }
+
+    private async Task StopSharedAudioSessionsAsync()
+    {
         var audioSession = _audioSession;
         _audioSession = null;
         var microphoneAudioSession = _microphoneAudioSession;
         _microphoneAudioSession = null;
-
-        foreach (var monitorSession in monitorSessions)
-        {
-            UnsubscribeMonitorStatus(monitorSession);
-            await monitorSession.DisposeAsync();
-        }
 
         if (audioSession is not null)
         {
@@ -661,14 +842,6 @@ public partial class MainWindow : Window
             UnsubscribeAudioStatus(microphoneAudioSession);
             await microphoneAudioSession.DisposeAsync();
         }
-
-        _viewModel.IsCapturing = false;
-        _viewModel.AppStatus = string.Empty;
-        lock (_clipCooldownLock)
-        {
-            _nextClipAllowedAtByNodeId.Clear();
-        }
-        UpdateNotifyIconText();
     }
 
     private async Task<string?> SaveMonitorNodeClipAsync(
@@ -1087,6 +1260,97 @@ public partial class MainWindow : Window
         };
     }
 
+    private AppConfig BuildValidatedCaptureConfig(IEnumerable<MonitorNodeViewModel> monitorNodes)
+    {
+        var captureNodes = monitorNodes.ToList();
+
+        if (captureNodes.Count == 0)
+        {
+            throw new InvalidOperationException("Add at least one monitor node before starting capture.");
+        }
+
+        if (!int.TryParse(_viewModel.ReplayLengthSecondsText, out var replayLengthSeconds) || replayLengthSeconds < 1 || replayLengthSeconds > 600)
+        {
+            throw new InvalidOperationException("Replay length must be a whole number between 1 and 600 seconds.");
+        }
+
+        if (!int.TryParse(_viewModel.FpsTargetText, out var fpsTarget) || fpsTarget < 1 || fpsTarget > 60)
+        {
+            throw new InvalidOperationException("FPS target must be a whole number between 1 and 60.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_viewModel.FfmpegPath) || !File.Exists(_viewModel.FfmpegPath))
+        {
+            var resolvedFfmpegPath = AppPaths.ResolveDefaultFfmpegPath();
+
+            if (string.IsNullOrWhiteSpace(resolvedFfmpegPath) || !File.Exists(resolvedFfmpegPath))
+            {
+                throw new InvalidOperationException($"ffmpeg.exe was not found at '{_viewModel.FfmpegPath}'.");
+            }
+
+            _viewModel.FfmpegPath = resolvedFfmpegPath;
+        }
+
+        var selectedVideoQuality = _viewModel.SelectedVideoQuality?.Value
+            ?? throw new InvalidOperationException("Choose a clip quality before starting capture.");
+        var clipAudioVolumePercent = (int)Math.Round(Math.Clamp(_viewModel.ClipAudioVolumePercent, 0d, 200d), MidpointRounding.AwayFromZero);
+        var seenMonitorDeviceNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var monitorNodeConfigs = new List<MonitorNodeConfig>(captureNodes.Count);
+
+        foreach (var node in captureNodes)
+        {
+            if (node.SelectedMonitor is null)
+            {
+                throw new InvalidOperationException($"Select a display for {node.DisplayTitle}.");
+            }
+
+            if (!seenMonitorDeviceNames.Add(node.SelectedMonitor.DeviceName))
+            {
+                throw new InvalidOperationException("Each active monitor node must target a different display.");
+            }
+
+            if (string.IsNullOrWhiteSpace(node.OutputFolder))
+            {
+                throw new InvalidOperationException($"Choose an output folder for {node.DisplayTitle}.");
+            }
+
+            monitorNodeConfigs.Add(new MonitorNodeConfig
+            {
+                Id = node.Id,
+                Name = node.DisplayTitle,
+                MonitorDeviceName = node.SelectedMonitor.DeviceName,
+                OutputFolder = node.OutputFolder.Trim(),
+                Hotkey = node.Hotkey.ToModel(),
+            });
+        }
+
+        EnsureUniqueHotkeys(monitorNodeConfigs.Select(node => node.Hotkey).ToArray());
+
+        return new AppConfig
+        {
+            MonitorNodes = monitorNodeConfigs,
+            MonitorADeviceName = monitorNodeConfigs.ElementAtOrDefault(0)?.MonitorDeviceName,
+            MonitorBDeviceName = monitorNodeConfigs.ElementAtOrDefault(1)?.MonitorDeviceName,
+            ReplayLengthSeconds = replayLengthSeconds,
+            FpsTarget = fpsTarget,
+            VideoQuality = selectedVideoQuality,
+            AudioMode = _viewModel.SelectedAudioMode?.Value ?? AudioCaptureMode.System,
+            ClipAudioVolumePercent = clipAudioVolumePercent,
+            MicrophoneDeviceId = string.IsNullOrWhiteSpace(_viewModel.SelectedMicrophone?.Id)
+                ? null
+                : _viewModel.SelectedMicrophone.Id,
+            OutputFolderA = monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
+            OutputFolderB = monitorNodeConfigs.ElementAtOrDefault(1)?.OutputFolder ?? monitorNodeConfigs.ElementAtOrDefault(0)?.OutputFolder ?? string.Empty,
+            UseUnifiedOutputFolder = false,
+            StartCaptureOnStartup = _viewModel.StartCaptureOnStartup,
+            LaunchOnStartup = _viewModel.LaunchOnStartup,
+            FfmpegPath = _viewModel.FfmpegPath,
+            HotkeyA = monitorNodeConfigs.ElementAtOrDefault(0)?.Hotkey ?? HotkeyGesture.Disabled(),
+            HotkeyB = monitorNodeConfigs.ElementAtOrDefault(1)?.Hotkey ?? HotkeyGesture.Disabled(),
+            HotkeyBoth = HotkeyGesture.Disabled(),
+        };
+    }
+
     private void RegisterHotkeys(AppConfig config)
     {
         _hotkeyManager.ReplaceAll(BuildHotkeyRegistrations(config.MonitorNodes));
@@ -1111,7 +1375,9 @@ public partial class MainWindow : Window
         try
         {
             var hotkeyRegistrations = BuildHotkeyRegistrations(
-                _viewModel.MonitorNodes.Select(node => new MonitorNodeConfig
+                _viewModel.MonitorNodes
+                    .Where(node => node.IsCapturing)
+                    .Select(node => new MonitorNodeConfig
                 {
                     Id = node.Id,
                     Hotkey = node.Hotkey.ToModel(),
@@ -1123,6 +1389,26 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _viewModel.ErrorMessage = ex.Message;
+        }
+    }
+
+    private void UpdateCaptureState()
+    {
+        var activeNodeIds = new HashSet<string>(_monitorSessionsByNodeId.Keys, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var node in _viewModel.MonitorNodes)
+        {
+            node.IsCapturing = activeNodeIds.Contains(node.Id);
+        }
+
+        _viewModel.IsCapturing = activeNodeIds.Count > 0;
+    }
+
+    private void ClearClipCooldown(string nodeId)
+    {
+        lock (_clipCooldownLock)
+        {
+            _nextClipAllowedAtByNodeId.Remove(nodeId);
         }
     }
 
@@ -1312,12 +1598,17 @@ public partial class MainWindow : Window
             {
                 await replacementSession.StartAsync();
                 _monitorSessionsByNodeId[node.Id] = replacementSession;
+                UpdateCaptureState();
+                RefreshHotkeysFromViewModel();
                 StartupDiagnostics.Write($"RecoverMonitorSessionAsync restarted {node.DisplayTitle} successfully.");
             }
             catch
             {
                 UnsubscribeMonitorStatus(replacementSession);
                 await replacementSession.DisposeAsync();
+                UpdateCaptureState();
+                RefreshHotkeysFromViewModel();
+                await StopSharedAudioSessionsIfIdleAsync();
                 throw;
             }
         }
@@ -1326,6 +1617,8 @@ public partial class MainWindow : Window
             StartupDiagnostics.Write($"RecoverMonitorSessionAsync failed for {node.DisplayTitle}: {ex}");
             node.Status = $"{node.DisplayTitle} recovery failed: {ex.Message}";
             _viewModel.ErrorMessage = ex.Message;
+            UpdateCaptureState();
+            RefreshHotkeysFromViewModel();
         }
         finally
         {

@@ -5,12 +5,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$packageName = "Rylogix.DualClip"
+
 function Test-IdentityRegistration {
     param(
         [string]$ExpectedOutputPath
     )
 
-    $existing = Get-AppxPackage DualClip.Identity -ErrorAction SilentlyContinue
+    $existing = Get-AppxPackage $packageName -ErrorAction SilentlyContinue
 
     if ($null -eq $existing) {
         return $false

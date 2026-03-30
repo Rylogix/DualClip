@@ -27,7 +27,8 @@ if ($normalizedVersion -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z\.-]+)?$') {
 $tag = "v$normalizedVersion"
 $releaseRoot = Join-Path $repoRoot "artifacts\github-release\$normalizedVersion"
 $publishDir = Join-Path $releaseRoot "publish"
-$assetPath = Join-Path $releaseRoot "DualClip.App.exe"
+$assetName = "DualClip.App-$normalizedVersion.exe"
+$assetPath = Join-Path $releaseRoot $assetName
 $msixRoot = Join-Path $releaseRoot "msix"
 $projectPath = Join-Path $repoRoot "src\DualClip.App\DualClip.App.csproj"
 $repository = "Rylogix/DualClip"

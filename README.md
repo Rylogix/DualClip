@@ -107,7 +107,7 @@ This build is self-contained and now carries `ffmpeg.exe` with it automatically,
 
 - DualClip now checks `Rylogix/DualClip` GitHub Releases on startup and automatically installs a newer portable build when one is available.
 - The updater expects a stable GitHub release tag like `v0.2.0`.
-- The release must include a portable executable asset named `DualClip.App.exe`.
+- The release should include a portable executable asset named like `DualClip.App-0.2.0.exe` or `DualClip.App.exe`.
 - On startup, DualClip downloads the new `.exe`, closes itself, swaps the executable, and relaunches automatically.
 - The Settings tab still lets you check manually and trigger installation if the automatic attempt fails.
 - Self-update needs write access to the folder where `DualClip.App.exe` is running. If you run it from a protected folder, update manually or move it somewhere writable first.
@@ -127,13 +127,13 @@ To build and upload the asset with GitHub CLI:
 That script publishes the app as a single-file `win-x64` executable, stamps the assembly version used by the updater, and writes the release asset here:
 
 ```text
-artifacts\github-release\0.2.0\DualClip.App.exe
+artifacts\github-release\0.2.0\DualClip.App-0.2.0.exe
 ```
 
 ## GitHub Actions Releases
 
 - `.github/workflows/release.yml` now builds and publishes release assets automatically.
-- Push a tag like `v0.2.0` and GitHub Actions will build `DualClip.App.exe`, create or update the matching GitHub release, and upload the asset the updater expects.
+- Push a tag like `v0.2.0` and GitHub Actions will build versioned assets like `DualClip.App-0.2.0.exe` and `DualClip-0.2.0-x64.msix`, create or update the matching GitHub release, and upload them.
 - You can also run the workflow manually with `workflow_dispatch` and provide a `version` input.
 - The workflow downloads `ffmpeg.exe` during CI because `Tools\ffmpeg.exe` is intentionally not stored in the repo.
 

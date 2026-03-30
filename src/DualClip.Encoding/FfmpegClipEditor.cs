@@ -187,6 +187,7 @@ public sealed class FfmpegClipEditor
                 $"zoompan=z='{zoomExpression}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':fps={Math.Max(1, request.FpsTarget)}:s={outputWidth}x{outputHeight}");
         }
 
+        AppendEvenOutputFilter(filters);
         filters.Add("setsar=1");
         return string.Join(",", filters);
     }
@@ -204,6 +205,8 @@ public sealed class FfmpegClipEditor
         var cropY = request.CropY ?? 0;
         var cropWidth = request.CropWidth ?? sourceWidth;
         var cropHeight = request.CropHeight ?? sourceHeight;
+        var outputWidth = EnsureEven(cropWidth);
+        var outputHeight = EnsureEven(cropHeight);
         var scalePercent = Math.Max(1d, request.ScalePercent) / 100d;
         var scaledWidth = Math.Max(2, EnsureEven(cropWidth * scalePercent));
         var scaledHeight = Math.Max(2, EnsureEven(cropHeight * scalePercent));
@@ -256,11 +259,13 @@ public sealed class FfmpegClipEditor
             clipFilters.Add($"colorchannelmixer=aa={FormatNumber(request.OpacityPercent / 100d)}");
         }
 
+        AppendEvenOutputFilter(clipFilters);
+
         var overlayX = $"(W-w)/2+{FormatNumber(request.TranslateX)}";
         var overlayY = $"(H-h)/2+{FormatNumber(request.TranslateY)}";
         return
             $"[0:v]{string.Join(",", clipFilters)}[fg];" +
-            $"color=c=black:s={cropWidth}x{cropHeight}:r={Math.Max(1, request.FpsTarget)}[bg];" +
+            $"color=c=black:s={outputWidth}x{outputHeight}:r={Math.Max(1, request.FpsTarget)}[bg];" +
             $"[bg][fg]overlay=x='{overlayX}':y='{overlayY}':format=auto,setsar=1[vout]";
     }
 
@@ -279,6 +284,11 @@ public sealed class FfmpegClipEditor
     {
         var rounded = Math.Max(2, (int)Math.Round(value));
         return rounded % 2 == 0 ? rounded : rounded + 1;
+    }
+
+    private static void AppendEvenOutputFilter(ICollection<string> filters)
+    {
+        filters.Add("crop=w=iw-mod(iw\\,2):h=ih-mod(ih\\,2)");
     }
 
     private static string FormatNumber(double value)

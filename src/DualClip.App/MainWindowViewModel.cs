@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.ComponentModel;
 using DualClip.Core.Models;
 
 namespace DualClip.App;
@@ -239,9 +240,9 @@ public sealed class MainWindowViewModel : BindableObject
 
     public bool CanStop => IsCapturing;
 
-    public bool CanSave => IsCapturing && MonitorNodes.Count > 0;
+    public bool CanSave => MonitorNodes.Any(node => node.IsCapturing);
 
-    public bool CanSaveAll => IsCapturing && MonitorNodes.Count > 1;
+    public bool CanSaveAll => MonitorNodes.Count(node => node.IsCapturing) > 1;
 
     public bool CanRemoveMonitorNodes => MonitorNodes.Count > 1;
 
@@ -377,8 +378,33 @@ public sealed class MainWindowViewModel : BindableObject
 
     private void MonitorNodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (e.OldItems is not null)
+        {
+            foreach (MonitorNodeViewModel node in e.OldItems)
+            {
+                node.PropertyChanged -= MonitorNode_PropertyChanged;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (MonitorNodeViewModel node in e.NewItems)
+            {
+                node.PropertyChanged += MonitorNode_PropertyChanged;
+            }
+        }
+
         RaisePropertyChanged(nameof(CanSave));
         RaisePropertyChanged(nameof(CanSaveAll));
         RaisePropertyChanged(nameof(CanRemoveMonitorNodes));
+    }
+
+    private void MonitorNode_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MonitorNodeViewModel.IsCapturing))
+        {
+            RaisePropertyChanged(nameof(CanSave));
+            RaisePropertyChanged(nameof(CanSaveAll));
+        }
     }
 }

@@ -132,11 +132,11 @@ $repoRoot = Get-RepoRoot
 Set-Location $repoRoot
 
 if ([string]::IsNullOrWhiteSpace($PackageName)) {
-    $PackageName = "DualClip.Identity"
+    $PackageName = "Rylogix.DualClip"
 }
 
 if ([string]::IsNullOrWhiteSpace($Publisher)) {
-    $Publisher = "CN=DualClip Development"
+    $Publisher = "CN=87B3C267-8985-4CA9-B2A8-54EFF3C074C7"
 }
 
 if ([string]::IsNullOrWhiteSpace($DisplayName)) {
@@ -144,7 +144,7 @@ if ([string]::IsNullOrWhiteSpace($DisplayName)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($PublisherDisplayName)) {
-    $PublisherDisplayName = "DualClip"
+    $PublisherDisplayName = "Rylogix"
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
