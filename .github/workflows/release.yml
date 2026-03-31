@@ -110,6 +110,8 @@ jobs:
           "release_root=$releaseRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "portable_root=$portableRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "store_root=$storeRoot" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "portable_asset=$assetPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "store_guide=$storeGuidePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -123,7 +125,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
           RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
-          RELEASE_ROOT: ${{ steps.package.outputs.release_root }}
+          PORTABLE_ASSET: ${{ steps.package.outputs.portable_asset }}
+          STORE_GUIDE: ${{ steps.package.outputs.store_guide }}
+          STORE_ROOT: ${{ steps.package.outputs.store_root }}
         with:
           script: |
             const fs = require('fs');
@@ -131,26 +135,37 @@ jobs:
             const { owner, repo } = context.repo;
             const tag = process.env.RELEASE_TAG;
             const releaseName = process.env.RELEASE_NAME;
-            const releaseRoot = process.env.RELEASE_ROOT;
-            const collectAssetPaths = (root) => {
-              const results = [];
-              for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-                const fullPath = path.join(root, entry.name);
-                if (entry.isDirectory()) {
-                  results.push(...collectAssetPaths(fullPath));
-                  continue;
-                }
+            const portableAsset = process.env.PORTABLE_ASSET;
+            const storeGuide = process.env.STORE_GUIDE;
+            const storeRoot = process.env.STORE_ROOT;
+            const assetPaths = [];
+            if (portableAsset && fs.existsSync(portableAsset)) {
+              assetPaths.push(portableAsset);
+            }
+            if (storeGuide && fs.existsSync(storeGuide)) {
+              assetPaths.push(storeGuide);
+            }
+            if (storeRoot && fs.existsSync(storeRoot)) {
+              const packagesRoot = path.join(storeRoot, 'packages');
+              if (fs.existsSync(packagesRoot)) {
+                for (const architecture of fs.readdirSync(packagesRoot, { withFileTypes: true })) {
+                  if (!architecture.isDirectory()) {
+                    continue;
+                  }
 
-                if (/\.(exe|msix|msixupload)$/i.test(entry.name)) {
-                  results.push(fullPath);
+                  const architectureRoot = path.join(packagesRoot, architecture.name);
+                  for (const entry of fs.readdirSync(architectureRoot, { withFileTypes: true })) {
+                    if (!entry.isFile()) {
+                      continue;
+                    }
+
+                    if (/\.(msix|msixupload)$/i.test(entry.name)) {
+                      assetPaths.push(path.join(architectureRoot, entry.name));
+                    }
+                  }
                 }
               }
-
-              return results;
-            };
-            const assetPaths = releaseRoot && fs.existsSync(releaseRoot)
-              ? collectAssetPaths(releaseRoot)
-              : [];
+            }
             const notesPath = path.join(process.env.GITHUB_WORKSPACE, '.github', 'release-notes', `${tag}.md`);
             const hasNotesFile = fs.existsSync(notesPath);
             const customReleaseNotes = hasNotesFile
@@ -158,7 +173,7 @@ jobs:
               : '';
 
             if (assetPaths.length === 0) {
-              throw new Error(`No release assets were found under ${releaseRoot}.`);
+              throw new Error('No curated release assets were found.');
             }
 
             let releaseId;
