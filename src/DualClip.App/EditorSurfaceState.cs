@@ -4,7 +4,7 @@ namespace DualClip.App;
 
 public sealed class EditorSurfaceState : BindableObject
 {
-    private EditorToolMode _activeToolMode = EditorToolMode.Transform;
+    private EditorToolMode _activeToolMode = EditorToolMode.Select;
     private double _timelineZoomPercent = 100d;
     private bool _isSnappingEnabled = true;
     private bool _isRippleDeleteEnabled = true;

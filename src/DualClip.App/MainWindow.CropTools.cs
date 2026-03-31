@@ -31,27 +31,47 @@ public partial class MainWindow
 
     private void CropTopThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromEdge(0, e.VerticalChange, CropResizeEdge.Top);
+        ResizeCropFromEdge(sender as FrameworkElement, 0, e.VerticalChange, CropResizeEdge.Top);
     }
 
     private void CropRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromEdge(e.HorizontalChange, 0, CropResizeEdge.Right);
+        ResizeCropFromEdge(sender as FrameworkElement, e.HorizontalChange, 0, CropResizeEdge.Right);
     }
 
     private void CropBottomThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromEdge(0, e.VerticalChange, CropResizeEdge.Bottom);
+        ResizeCropFromEdge(sender as FrameworkElement, 0, e.VerticalChange, CropResizeEdge.Bottom);
     }
 
     private void CropLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromEdge(e.HorizontalChange, 0, CropResizeEdge.Left);
+        ResizeCropFromEdge(sender as FrameworkElement, e.HorizontalChange, 0, CropResizeEdge.Left);
     }
 
-    private void ResizeCropFromEdge(double horizontalChange, double verticalChange, CropResizeEdge edge)
+    private void CropMoveThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        if (!TryGetPreviewSourceDelta(horizontalChange, verticalChange, out var deltaX, out var deltaY))
+        if (!TryGetPreviewSourceDelta(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, out var deltaX, out var deltaY))
+        {
+            return;
+        }
+
+        if (Math.Abs(e.HorizontalChange) < PreviewMoveDeadzonePixels && Math.Abs(e.VerticalChange) < PreviewMoveDeadzonePixels)
+        {
+            return;
+        }
+
+        var rect = _cropRectSource;
+        var nextX = Math.Clamp(rect.X + deltaX, 0, Math.Max(0, _selectedClipWidth - rect.Width));
+        var nextY = Math.Clamp(rect.Y + deltaY, 0, Math.Max(0, _selectedClipHeight - rect.Height));
+        _cropRectSource = new Rect(nextX, nextY, rect.Width, rect.Height);
+        ApplyCurrentEditorStateToSelectedSegment();
+        UpdateCropOverlay();
+    }
+
+    private void ResizeCropFromEdge(FrameworkElement? dragSource, double horizontalChange, double verticalChange, CropResizeEdge edge)
+    {
+        if (!TryGetPreviewSourceDelta(dragSource, horizontalChange, verticalChange, out var deltaX, out var deltaY))
         {
             return;
         }

@@ -26,8 +26,12 @@ public partial class MainWindow : Window
     private const double MinimumTrimDurationSeconds = 0.1d;
     private const double MinimumCropSizePixels = 32d;
     private const double PreviewPlaybackSegmentEndToleranceSeconds = 0.03d;
+    private const double PreviewSeekEndGuardSeconds = 0.01d;
     private const int AudioAlignmentContextSeconds = 12;
     private static readonly TimeSpan ClipSaveCooldown = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan EditorSaveTimeout = TimeSpan.FromMinutes(3);
+    private const int OverwriteReplaceRetryCount = 6;
+    private static readonly TimeSpan OverwriteReplaceInitialDelay = TimeSpan.FromMilliseconds(250);
 
     private readonly JsonAppConfigStore _configStore = new();
     private readonly GitHubReleaseUpdateService _updateService = new();
@@ -46,6 +50,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, DateTimeOffset> _nextClipAllowedAtByNodeId = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<MonitorCaptureSession, MonitorNodeViewModel> _monitorNodesBySession = [];
     private readonly HashSet<string> _monitorNodesRecovering = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _processingClipPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _clipCooldownLock = new();
     private readonly object _clipDeleteQueueLock = new();
     private readonly object _monitorRecoveryLock = new();
@@ -53,10 +58,13 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _pendingClipDeletionPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer _settingsAutoSaveTimer;
     private readonly MediaElement _previewMediaElement;
+    private readonly DateTimeOffset _startupOverlayShownAt = DateTimeOffset.UtcNow;
     private long _previewPlaybackRequestId;
     private bool _isExitRequested;
     private bool _hasShownTrayTip;
-    private bool _isEditorBusy;
+    private bool _isEditorBusy = false;
+    private bool _isEditorSaveInProgress;
+    private bool _isPreviewMediaReady;
     private bool _isProcessingClipDeleteQueue;
     private bool _isUpdatingTransformControls;
     private bool _isLoadingSettings;
@@ -79,12 +87,14 @@ public partial class MainWindow : Window
     private double _translateX;
     private double _translateY;
     private double _opacityPercent = 100d;
+    private double _previewVolumePercent = 100d;
     private bool _flipHorizontal;
     private bool _flipVertical;
     private AudioReplaySession? _audioSession;
     private AudioReplaySession? _microphoneAudioSession;
     private CancellationTokenSource? _clipLibraryThumbnailCts;
     private GitHubUpdateRelease? _pendingUpdate;
+    private LogViewerWindow? _logViewerWindow;
     private readonly bool _isPackagedApp = AppRuntimeInfo.IsPackaged;
 
     public MainWindow()
@@ -94,6 +104,7 @@ public partial class MainWindow : Window
         StartupDiagnostics.Write("MainWindow InitializeComponent completed.");
         _previewMediaElement = CreatePreviewMediaElement();
         PreviewMediaHost.Children.Add(_previewMediaElement);
+        RefreshPreviewVolume();
         StartupDiagnostics.Write("MainWindow preview media element created.");
         DataContext = _viewModel;
         _viewModel.IsPackagedApp = _isPackagedApp;
@@ -139,8 +150,26 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         StartupDiagnostics.Write("Window_Loaded entered.");
-        await LoadStateAsync();
-        UpdateClipLibraryAutoRefreshState();
+        AppLog.Info("MainWindow", "Window loaded.", ("startup_overlay_visible", _viewModel.IsStartupOverlayVisible));
+
+        try
+        {
+            await LoadStateAsync();
+            UpdateClipLibraryAutoRefreshState();
+        }
+        finally
+        {
+            var remainingOverlayTime = TimeSpan.FromSeconds(1) - (DateTimeOffset.UtcNow - _startupOverlayShownAt);
+
+            if (remainingOverlayTime > TimeSpan.Zero)
+            {
+                await Task.Delay(remainingOverlayTime);
+            }
+
+            _viewModel.IsStartupOverlayVisible = false;
+            AppLog.Info("MainWindow", "Startup overlay dismissed.");
+        }
+
         StartupDiagnostics.Write("Window_Loaded completed.");
     }
 
@@ -161,6 +190,33 @@ public partial class MainWindow : Window
         var windowHandle = new WindowInteropHelper(this).Handle;
         _hotkeyManager.Attach(windowHandle);
         _hotkeyManager.HotkeyPressed += HotkeyManager_HotkeyPressed;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(CenterWindowWithinWorkingArea));
+    }
+
+    private void CenterWindowWithinWorkingArea()
+    {
+        if (WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        var windowHandle = new WindowInteropHelper(this).Handle;
+        var workingArea = Forms.Screen.FromHandle(windowHandle).WorkingArea;
+        var windowWidth = ActualWidth > 0 ? ActualWidth : Width;
+        var windowHeight = ActualHeight > 0 ? ActualHeight : Height;
+
+        if (double.IsNaN(windowWidth) || windowWidth <= 0)
+        {
+            windowWidth = MinWidth;
+        }
+
+        if (double.IsNaN(windowHeight) || windowHeight <= 0)
+        {
+            windowHeight = MinHeight;
+        }
+
+        Left = workingArea.Left + Math.Max(0d, (workingArea.Width - windowWidth) / 2d);
+        Top = workingArea.Top + Math.Max(0d, (workingArea.Height - windowHeight) / 2d);
     }
 
     private void OpenDiscordButton_Click(object sender, RoutedEventArgs e)
@@ -549,6 +605,7 @@ public partial class MainWindow : Window
     private async Task StartCaptureAsync()
     {
         StartupDiagnostics.Write("StartCaptureAsync entered.");
+        AppLog.Info("Capture", "Start all capture requested.");
         _viewModel.ErrorMessage = string.Empty;
 
         try
@@ -619,11 +676,13 @@ public partial class MainWindow : Window
             RefreshHotkeysFromViewModel();
             _viewModel.AppStatus = string.Empty;
             UpdateNotifyIconText();
+            AppLog.Info("Capture", "Start all capture completed.", ("active_monitor_count", _monitorSessionsByNodeId.Count));
             StartupDiagnostics.Write("StartCaptureAsync completed successfully.");
         }
         catch (Exception ex)
         {
             StartupDiagnostics.Write($"StartCaptureAsync failed: {ex}");
+            AppLog.Error("Capture", "Start all capture failed.", ex);
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Capture did not start.";
             UpdateNotifyIconText();
@@ -632,6 +691,7 @@ public partial class MainWindow : Window
 
     private async Task StopCaptureAsync()
     {
+        AppLog.Info("Capture", "Stop all capture requested.", ("active_monitor_count", _monitorSessionsByNodeId.Count));
         _hotkeyManager.UnregisterAll();
 
         var monitorSessions = _monitorSessionsByNodeId.ToList();
@@ -661,11 +721,13 @@ public partial class MainWindow : Window
             _nextClipAllowedAtByNodeId.Clear();
         }
         UpdateNotifyIconText();
+        AppLog.Info("Capture", "Stop all capture completed.");
     }
 
     private async Task StartMonitorNodeCaptureAsync(MonitorNodeViewModel node)
     {
         StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync entered for {node.DisplayTitle}.");
+        AppLog.Info("Capture", "Start monitor capture requested.", ("monitor_node", node.DisplayTitle));
         _viewModel.ErrorMessage = string.Empty;
 
         if (_monitorSessionsByNodeId.ContainsKey(node.Id))
@@ -709,11 +771,13 @@ public partial class MainWindow : Window
             RefreshHotkeysFromViewModel();
             _viewModel.AppStatus = string.Empty;
             UpdateNotifyIconText();
+            AppLog.Info("Capture", "Start monitor capture completed.", ("monitor_node", node.DisplayTitle));
             StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync completed for {node.DisplayTitle}.");
         }
         catch (Exception ex)
         {
             StartupDiagnostics.Write($"StartMonitorNodeCaptureAsync failed for {node.DisplayTitle}: {ex}");
+            AppLog.Error("Capture", "Start monitor capture failed.", ex, ("monitor_node", node.DisplayTitle));
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Capture did not start.";
             UpdateNotifyIconText();
@@ -723,6 +787,7 @@ public partial class MainWindow : Window
     private async Task StopMonitorNodeCaptureAsync(MonitorNodeViewModel node)
     {
         StartupDiagnostics.Write($"StopMonitorNodeCaptureAsync entered for {node.DisplayTitle}.");
+        AppLog.Info("Capture", "Stop monitor capture requested.", ("monitor_node", node.DisplayTitle));
 
         if (!_monitorSessionsByNodeId.Remove(node.Id, out var session))
         {
@@ -765,6 +830,7 @@ public partial class MainWindow : Window
         RefreshHotkeysFromViewModel();
         _viewModel.AppStatus = string.Empty;
         UpdateNotifyIconText();
+        AppLog.Info("Capture", "Stop monitor capture completed.", ("monitor_node", node.DisplayTitle));
         StartupDiagnostics.Write($"StopMonitorNodeCaptureAsync completed for {node.DisplayTitle}.");
     }
 
@@ -868,6 +934,7 @@ public partial class MainWindow : Window
         }
 
         node.Status = $"Saving {node.DisplayTitle} clip...";
+        AppLog.Info("Capture", "Saving monitor clip.", ("monitor_node", node.DisplayTitle), ("output_folder", node.OutputFolder));
 
         try
         {
@@ -885,12 +952,14 @@ public partial class MainWindow : Window
                 RefreshClipLibrary(outputPath);
             }
 
+            AppLog.Info("Capture", "Monitor clip saved.", ("monitor_node", node.DisplayTitle), ("output_path", outputPath));
             return outputPath;
         }
         catch (Exception ex)
         {
             node.Status = $"{node.DisplayTitle} save failed: {ex.Message}";
             _viewModel.ErrorMessage = ex.Message;
+            AppLog.Error("Capture", "Monitor clip save failed.", ex, ("monitor_node", node.DisplayTitle));
             return null;
         }
     }
@@ -905,6 +974,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        AppLog.Info("Capture", "Save all active monitor clips requested.", ("active_monitor_count", activeNodes.Count));
 
         var replayLengthSeconds = _monitorSessionsByNodeId[activeNodes[0].Id].Options.ReplayLengthSeconds;
         var audioSegments = GetAudioSegments(replayLengthSeconds);
@@ -928,11 +999,14 @@ public partial class MainWindow : Window
         {
             RefreshClipLibrary(preferredPath);
         }
+
+        AppLog.Info("Capture", "Save all active monitor clips completed.", ("preferred_path", preferredPath ?? "<none>"));
     }
 
     private async Task SaveSettingsAsync()
     {
         _viewModel.ErrorMessage = string.Empty;
+        AppLog.Info("Settings", "Saving settings requested.", ("is_capturing", _viewModel.IsCapturing));
 
         try
         {
@@ -955,11 +1029,13 @@ public partial class MainWindow : Window
             }
 
             RefreshClipLibrary(GetSelectedClip()?.FilePath);
+            AppLog.Info("Settings", "Settings saved successfully.");
         }
         catch (Exception ex)
         {
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.AppStatus = "Settings were not saved.";
+            AppLog.Error("Settings", "Settings save failed.", ex);
         }
     }
 
@@ -1535,6 +1611,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        AppLog.Info("CaptureSession", "Monitor session status updated.", ("monitor_node", node.DisplayTitle), ("status", message));
+
         Dispatcher.BeginInvoke(() =>
         {
             node.Status = message;
@@ -1641,6 +1719,7 @@ public partial class MainWindow : Window
 
     private void AudioSession_StatusChanged(object? sender, string message)
     {
+        AppLog.Info("AudioSession", "Audio session status updated.", ("status", message));
         Dispatcher.BeginInvoke(() =>
         {
             _viewModel.AppStatus = message;
@@ -1937,17 +2016,7 @@ public partial class MainWindow : Window
     {
         var selectedPath = preferredPath ?? GetSelectedClip()?.FilePath;
         var items = GetClipLibraryItems();
-        var clipLibraryChanged = HasClipLibraryChanged(items);
-
-        if (clipLibraryChanged)
-        {
-            _viewModel.ClipLibrary.Clear();
-
-            foreach (var item in items)
-            {
-                _viewModel.ClipLibrary.Add(item);
-            }
-        }
+        var thumbnailRefreshItems = ApplyClipLibrarySnapshot(items);
 
         if (!string.IsNullOrWhiteSpace(selectedPath))
         {
@@ -1964,10 +2033,142 @@ public partial class MainWindow : Window
 
         UpdateEditorControlState();
 
-        if (clipLibraryChanged)
+        if (thumbnailRefreshItems.Count > 0)
         {
-            StartClipLibraryThumbnailRefresh(items);
+            StartClipLibraryThumbnailRefresh(thumbnailRefreshItems);
         }
+    }
+
+    private IReadOnlyList<ClipLibraryItem> ApplyClipLibrarySnapshot(IReadOnlyList<ClipLibraryItem> items)
+    {
+        var existingByPath = _viewModel.ClipLibrary.ToDictionary(item => item.FilePath, StringComparer.OrdinalIgnoreCase);
+        var desiredItems = new List<ClipLibraryItem>(items.Count);
+        var thumbnailRefreshItems = new List<ClipLibraryItem>();
+
+        foreach (var snapshot in items)
+        {
+            if (existingByPath.TryGetValue(snapshot.FilePath, out var existing))
+            {
+                var metadataChanged = existing.ModifiedAt != snapshot.ModifiedAt
+                    || existing.FileSizeBytes != snapshot.FileSizeBytes
+                    || !string.Equals(existing.DisplayName, snapshot.DisplayName, StringComparison.Ordinal);
+
+                existing.UpdateFileDetails(snapshot.DisplayName, snapshot.ModifiedAt, snapshot.FileSizeBytes);
+                ApplyClipTransientState(existing);
+                desiredItems.Add(existing);
+
+                if (metadataChanged || !existing.HasThumbnail)
+                {
+                    thumbnailRefreshItems.Add(existing);
+                }
+
+                continue;
+            }
+
+            ApplyClipTransientState(snapshot);
+            desiredItems.Add(snapshot);
+            thumbnailRefreshItems.Add(snapshot);
+        }
+
+        var desiredPaths = desiredItems
+            .Select(item => item.FilePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        for (var index = _viewModel.ClipLibrary.Count - 1; index >= 0; index--)
+        {
+            if (!desiredPaths.Contains(_viewModel.ClipLibrary[index].FilePath))
+            {
+                _viewModel.ClipLibrary.RemoveAt(index);
+            }
+        }
+
+        for (var index = 0; index < desiredItems.Count; index++)
+        {
+            var desiredItem = desiredItems[index];
+
+            if (index >= _viewModel.ClipLibrary.Count)
+            {
+                _viewModel.ClipLibrary.Add(desiredItem);
+                continue;
+            }
+
+            if (ReferenceEquals(_viewModel.ClipLibrary[index], desiredItem))
+            {
+                continue;
+            }
+
+            var existingIndex = _viewModel.ClipLibrary.IndexOf(desiredItem);
+
+            if (existingIndex >= 0)
+            {
+                _viewModel.ClipLibrary.Move(existingIndex, index);
+            }
+            else
+            {
+                _viewModel.ClipLibrary.Insert(index, desiredItem);
+            }
+        }
+
+        while (_viewModel.ClipLibrary.Count > desiredItems.Count)
+        {
+            _viewModel.ClipLibrary.RemoveAt(_viewModel.ClipLibrary.Count - 1);
+        }
+
+        return thumbnailRefreshItems;
+    }
+
+    private bool IsClipProcessing(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return false;
+        }
+
+        return _processingClipPaths.Contains(filePath);
+    }
+
+    private void ApplyClipTransientState(ClipLibraryItem item)
+    {
+        item.IsProcessing = IsClipProcessing(item.FilePath);
+    }
+
+    private void SetClipProcessingState(string? filePath, bool isProcessing)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        if (isProcessing)
+        {
+            _processingClipPaths.Add(filePath);
+        }
+        else
+        {
+            _processingClipPaths.Remove(filePath);
+        }
+
+        foreach (var item in _viewModel.ClipLibrary.Where(item =>
+                     string.Equals(item.FilePath, filePath, StringComparison.OrdinalIgnoreCase)))
+        {
+            item.IsProcessing = isProcessing;
+        }
+
+        var selectedClip = GetSelectedClip();
+        if (string.Equals(selectedClip?.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (isProcessing)
+            {
+                StopPreview(clearSource: true);
+            }
+            else if (PreviewMediaElement.Source is null && File.Exists(filePath))
+            {
+                LoadSelectedClip();
+                return;
+            }
+        }
+
+        UpdateEditorControlState();
     }
 
     private bool HasClipLibraryChanged(IReadOnlyList<ClipLibraryItem> items)
@@ -2011,19 +2212,22 @@ public partial class MainWindow : Window
 
             foreach (var filePath in Directory.EnumerateFiles(folder, "*.mp4", SearchOption.TopDirectoryOnly))
             {
-                if (IsClipPendingDeletion(filePath))
+                if (IsClipPendingDeletion(filePath) || IsInternalClipLibraryArtifact(filePath))
                 {
                     continue;
                 }
 
                 var fileInfo = new FileInfo(filePath);
-                clips.Add(new ClipLibraryItem
+                var item = new ClipLibraryItem
                 {
                     FilePath = filePath,
-                    DisplayName = $"{fileInfo.Name}   [{fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}]",
-                    ModifiedAt = fileInfo.LastWriteTime,
-                    FileSizeBytes = fileInfo.Length,
-                });
+                };
+                item.UpdateFileDetails(
+                    $"{fileInfo.Name}   [{fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}]",
+                    fileInfo.LastWriteTime,
+                    fileInfo.Length);
+                ApplyClipTransientState(item);
+                clips.Add(item);
             }
         }
 
@@ -2040,6 +2244,15 @@ public partial class MainWindow : Window
         {
             return _pendingClipDeletionPaths.Contains(filePath);
         }
+    }
+
+    private static bool IsInternalClipLibraryArtifact(string filePath)
+    {
+        var fileName = Path.GetFileName(filePath);
+
+        return fileName.Contains("_overwrite_stage_", StringComparison.OrdinalIgnoreCase)
+            || fileName.Contains("_overwrite_backup_", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".dualclipbak", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ClipLibraryRefreshTimer_Tick(object? sender, EventArgs e)
@@ -2145,12 +2358,21 @@ public partial class MainWindow : Window
 
     private void ClipListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        AppLog.Info(
+            "Editor",
+            "Clip library selection changed.",
+            ("selected_clip", GetSelectedClip()?.FilePath ?? "<none>"));
         LoadSelectedClip();
     }
 
     private void RenameClipTitleButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement element || element.DataContext is not ClipLibraryItem item)
+        {
+            return;
+        }
+
+        if (item.IsProcessing)
         {
             return;
         }
@@ -2250,6 +2472,13 @@ public partial class MainWindow : Window
         var selectedClip = GetSelectedClip();
         var renamedSelectedClip = string.Equals(selectedClip?.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase);
 
+        if (item.IsProcessing)
+        {
+            item.CancelRename();
+            UpdateClipLibraryAutoRefreshState();
+            return;
+        }
+
         if (renamedSelectedClip)
         {
             StopPreview(clearSource: true);
@@ -2309,6 +2538,11 @@ public partial class MainWindow : Window
             if (sender is not FrameworkElement element
                 || element.DataContext is not ClipLibraryItem item
                 || string.IsNullOrWhiteSpace(item.FilePath))
+            {
+                return;
+            }
+
+            if (item.IsProcessing)
             {
                 return;
             }
@@ -2495,6 +2729,7 @@ public partial class MainWindow : Window
 
     private void LoadSelectedClip()
     {
+        SaveEditedClipPopup.IsOpen = false;
         StopPreview(clearSource: true);
 
         var selectedClip = GetSelectedClip();
@@ -2509,13 +2744,27 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (selectedClip.IsProcessing)
+        {
+            ClearLoadedClipEditorState();
+            _viewModel.Editor.SelectedClipTitle = Path.GetFileName(selectedClip.FilePath);
+            _viewModel.EditorStatus = $"Processing {Path.GetFileName(selectedClip.FilePath)}...";
+            TimelinePositionTextBlock.Text = "Processing clip...";
+            UpdateEditorVisuals();
+            UpdateEditorControlState();
+            return;
+        }
+
         ClearTimelineUndoHistory();
         _viewModel.Editor.SelectedClipTitle = Path.GetFileName(selectedClip.FilePath);
         _selectedClipDurationSeconds = 0;
         _selectedClipWidth = 0;
         _selectedClipHeight = 0;
         ClearLoadedClipEditorState();
+        _isPreviewMediaReady = false;
         PreviewMediaElement.Source = new Uri(selectedClip.FilePath);
+        RefreshPreviewVolume();
+        AppLog.Info("Editor", "Loading selected clip into preview.", ("clip_path", selectedClip.FilePath));
         _viewModel.EditorStatus = $"Loaded {Path.GetFileName(selectedClip.FilePath)}.";
         TimelinePositionTextBlock.Text = "Loading clip...";
         UpdateEditorVisuals();
@@ -2530,10 +2779,19 @@ public partial class MainWindow : Window
         }
 
         _viewModel.ErrorMessage = string.Empty;
+        _isPreviewMediaReady = true;
         _selectedClipDurationSeconds = PreviewMediaElement.NaturalDuration.TimeSpan.TotalSeconds;
         _selectedClipWidth = PreviewMediaElement.NaturalVideoWidth;
         _selectedClipHeight = PreviewMediaElement.NaturalVideoHeight;
         InitializeTimelineForLoadedClip();
+        RefreshPreviewVolume();
+        AppLog.Info(
+            "Editor",
+            "Preview media opened.",
+            ("clip_title", _viewModel.Editor.SelectedClipTitle),
+            ("duration_seconds", _selectedClipDurationSeconds),
+            ("width", _selectedClipWidth),
+            ("height", _selectedClipHeight));
 
         PreviewMediaElement.Pause();
         SeekToPlayhead(updatePreviewPosition: true);
@@ -2559,11 +2817,13 @@ public partial class MainWindow : Window
             : $"DualClip could not render {clipName} in the editor preview: {e.ErrorException.Message}";
 
         ClearLoadedClipEditorState();
+        _isPreviewMediaReady = false;
         _viewModel.Editor.SelectedClipTitle = selectedClip is null ? "No clip selected" : Path.GetFileName(selectedClip.FilePath);
         _viewModel.ErrorMessage = message;
         _viewModel.EditorStatus = $"Preview failed for {clipName}.";
         TimelinePositionTextBlock.Text = "Preview unavailable";
         UpdateEditorControlState();
+        AppLog.Error("Editor", "Preview media failed.", e.ErrorException, ("clip_name", clipName));
     }
 
     private void PreviewMediaElement_MediaEnded(object sender, RoutedEventArgs e)
@@ -2573,16 +2833,34 @@ public partial class MainWindow : Window
             return;
         }
 
-        _isTimelinePlaybackActive = false;
-        _previewTimer.Stop();
-        UpdatePreviewPlaybackButtonVisualState();
+        StopPreviewPlaybackForPlaybackCompletion();
         SeekToPlayhead(updatePreviewPosition: true);
     }
 
     private void PlayPreviewButton_Click(object sender, RoutedEventArgs e)
     {
-        if (GetSelectedClip() is null || PreviewMediaElement.Source is null)
+        var selectedClip = GetSelectedClip();
+
+        if (selectedClip is null)
         {
+            return;
+        }
+
+        if (selectedClip.IsProcessing)
+        {
+            _viewModel.EditorStatus = $"Processing {Path.GetFileName(selectedClip.FilePath)}...";
+            return;
+        }
+
+        if (PreviewMediaElement.Source is null || !_isPreviewMediaReady)
+        {
+            AppLog.Warn(
+                "Editor",
+                "Preview play requested before media was ready. Reloading clip preview.",
+                ("clip_path", selectedClip.FilePath),
+                ("has_source", PreviewMediaElement.Source is not null),
+                ("is_preview_ready", _isPreviewMediaReady));
+            LoadSelectedClip();
             return;
         }
 
@@ -2593,22 +2871,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        var timelineDuration = GetTimelineDurationSeconds();
+        var timelineDuration = GetTimelineDisplayDurationSeconds();
 
         if (timelineDuration <= 0)
         {
             return;
         }
 
-        if (_playheadSeconds >= timelineDuration - PreviewPlaybackSegmentEndToleranceSeconds)
+        _playheadSeconds = ClampTimelinePlayhead(_playheadSeconds);
+
+        if (_playheadSeconds >= GetTimelinePlayableMaximumSeconds() - PreviewPlaybackSegmentEndToleranceSeconds)
         {
-            _playheadSeconds = 0;
+            _playheadSeconds = GetTimelinePlayableMinimumSeconds();
         }
 
         if (!TryFindSegmentAtTimelineTime(_playheadSeconds, out var segment, out var segmentTimelineStart, out var localOffsetSeconds)
             || segment is null)
         {
-            _playheadSeconds = 0;
+            _playheadSeconds = GetTimelinePlayableMinimumSeconds();
 
             if (!TryFindSegmentAtTimelineTime(_playheadSeconds, out segment, out segmentTimelineStart, out localOffsetSeconds)
                 || segment is null)
@@ -2622,6 +2902,13 @@ public partial class MainWindow : Window
             SelectTimelineSegment(segment);
         }
 
+        AppLog.Info(
+            "Editor",
+            "Starting preview playback.",
+            ("clip_path", selectedClip.FilePath),
+            ("playhead_seconds", _playheadSeconds),
+            ("segment_start_seconds", segment.SourceStartSeconds),
+            ("segment_end_seconds", segment.SourceEndSeconds));
         StartPreviewPlayback(segment, localOffsetSeconds, segmentTimelineStart + localOffsetSeconds);
     }
 
@@ -2642,6 +2929,24 @@ public partial class MainWindow : Window
         var segmentDuration = GetSelectedSegmentDurationSeconds();
         var mediaLocalOffsetSeconds = PreviewMediaElement.Position.TotalSeconds - _selectedTimelineSegment.SourceStartSeconds;
 
+        if (UsesSingleSegmentSourceTimeline())
+        {
+            var maxPlayableSeconds = GetTimelinePlayableMaximumSeconds();
+
+            if (_selectedTimelineSegment.SourceEndSeconds <= _selectedTimelineSegment.SourceStartSeconds
+                || PreviewMediaElement.Position.TotalSeconds >= maxPlayableSeconds - PreviewPlaybackSegmentEndToleranceSeconds)
+            {
+                _playheadSeconds = maxPlayableSeconds;
+                StopPreviewPlaybackForPlaybackCompletion();
+                SeekToPlayhead(updatePreviewPosition: true);
+                return;
+            }
+
+            _playheadSeconds = ClampTimelinePlayhead(PreviewMediaElement.Position.TotalSeconds);
+            UpdateTimelinePlaybackVisuals();
+            return;
+        }
+
         if (segmentDuration <= 0 || mediaLocalOffsetSeconds >= segmentDuration - PreviewPlaybackSegmentEndToleranceSeconds)
         {
             if (TryContinuePreviewPlaybackAtNextSegment())
@@ -2649,8 +2954,8 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _playheadSeconds = GetTimelineDurationSeconds();
-            PausePreviewPlayback();
+            _playheadSeconds = GetTimelineDisplayDurationSeconds();
+            StopPreviewPlaybackForPlaybackCompletion();
             SeekToPlayhead(updatePreviewPosition: true);
             return;
         }
@@ -2658,7 +2963,7 @@ public partial class MainWindow : Window
         _playheadSeconds = Math.Clamp(
             segmentTimelineStart + Math.Clamp(mediaLocalOffsetSeconds, 0, segmentDuration),
             0,
-            GetTimelineDurationSeconds());
+            GetTimelineDisplayDurationSeconds());
 
         UpdateTimelinePlaybackVisuals();
     }
@@ -2668,6 +2973,16 @@ public partial class MainWindow : Window
         UpdateTimelineVisuals();
     }
 
+    private void TimelineRulerCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (GetTimelineDurationSeconds() <= 0 || TimelineRulerCanvas.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        MovePlayheadToTimelineX(e.GetPosition(TimelineRulerCanvas).X);
+    }
+
     private void TimelineCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (GetTimelineDurationSeconds() <= 0 || TimelineCanvas.ActualWidth <= 0)
@@ -2675,12 +2990,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        MovePlayheadToTimelineX(e.GetPosition(TimelineCanvas).X);
+        var clickPosition = e.GetPosition(TimelineCanvas);
+        if (clickPosition.Y > TimelineSegmentTopPixels)
+        {
+            return;
+        }
+
+        MovePlayheadToTimelineX(clickPosition.X);
     }
 
     private void MovePlayheadToTimelineX(double timelineX)
     {
-        _playheadSeconds = TimelineXToTime(timelineX);
+        _playheadSeconds = ClampTimelinePlayhead(TimelineXToTime(timelineX));
 
         if (TryFindSegmentAtTimelineTime(_playheadSeconds, out var segment, out _, out _))
         {
@@ -2697,14 +3018,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        _playheadSeconds = Math.Clamp(PreviewMediaElement.Position.TotalSeconds, 0, _selectedClipDurationSeconds);
+        _playheadSeconds = ClampTimelinePlayhead(PreviewMediaElement.Position.TotalSeconds);
         UpdateTimelineLabel(_playheadSeconds);
         UpdateTimelineVisuals();
     }
 
     private void UpdateTimelineLabel(double currentSeconds)
     {
-        TimelinePositionTextBlock.Text = $"{currentSeconds:0.00}s / {GetTimelineDurationSeconds():0.00}s";
+        TimelinePositionTextBlock.Text = $"{currentSeconds:0.00}s / {GetTimelineDisplayDurationSeconds():0.00}s";
     }
 
     private void UpdateTimelinePlaybackVisuals()
@@ -2725,8 +3046,8 @@ public partial class MainWindow : Window
     private void PlayheadThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
         PausePreviewPlayback();
-        _playheadSeconds = Math.Clamp(_playheadSeconds + TimelineDeltaToTime(e.HorizontalChange), 0, GetTimelineDurationSeconds());
-        _playheadSeconds = SnapTimelineTimeValue(_playheadSeconds, 0, GetTimelineDurationSeconds());
+        _playheadSeconds = ClampTimelinePlayhead(_playheadSeconds + TimelineDeltaToTime(e.HorizontalChange));
+        _playheadSeconds = ClampTimelinePlayhead(SnapTimelineTimeValue(_playheadSeconds, GetTimelinePlayableMinimumSeconds(), GetTimelinePlayableMaximumSeconds()));
         if (TryFindSegmentAtTimelineTime(_playheadSeconds, out var segment, out _, out _))
         {
             SelectTimelineSegment(segment);
@@ -2742,23 +3063,21 @@ public partial class MainWindow : Window
         }
 
         PausePreviewPlayback();
-        var localPlayhead = GetPlayheadOffsetWithinSelectedSegment();
         _trimStartSeconds = Math.Clamp(
             _trimStartSeconds + TimelineDeltaToTime(e.HorizontalChange),
             0,
             Math.Max(0, _trimEndSeconds - MinimumTrimDurationSeconds));
-        _trimStartSeconds = SnapLocalSegmentTime(_trimStartSeconds, 0, localPlayhead, Math.Max(0, _trimEndSeconds - MinimumTrimDurationSeconds));
+        _trimStartSeconds = SnapSourceClipTime(_trimStartSeconds, 0, _playheadSeconds, Math.Max(0, _trimEndSeconds - MinimumTrimDurationSeconds));
         ApplyCurrentEditorStateToSelectedSegment();
 
-        if (_playheadSeconds < GetSelectedSegmentTimelineStartSeconds())
+        if (!UsesSingleSegmentSourceTimeline())
         {
-            _playheadSeconds = GetSelectedSegmentTimelineStartSeconds();
-            SeekToPlayhead(updatePreviewPosition: true);
-            return;
+            NormalizeTimelineSegmentPositions();
         }
 
-        UpdateTimelineVisuals();
-        UpdateTimelineLabel(_playheadSeconds);
+        _playheadSeconds = GetSelectedSegmentTimelineStartSeconds();
+        SeekToPlayhead(updatePreviewPosition: true);
+        return;
     }
 
     private void TrimEndThumb_DragDelta(object sender, DragDeltaEventArgs e)
@@ -2769,22 +3088,39 @@ public partial class MainWindow : Window
         }
 
         PausePreviewPlayback();
-        var localPlayhead = GetPlayheadOffsetWithinSelectedSegment();
         _trimEndSeconds = Math.Clamp(
             _trimEndSeconds + TimelineDeltaToTime(e.HorizontalChange),
             Math.Min(_selectedClipDurationSeconds, _trimStartSeconds + MinimumTrimDurationSeconds),
             _selectedClipDurationSeconds);
-        _trimEndSeconds = SnapLocalSegmentTime(_trimEndSeconds, _selectedClipDurationSeconds, localPlayhead, _trimStartSeconds + MinimumTrimDurationSeconds);
+        _trimEndSeconds = SnapSourceClipTime(_trimEndSeconds, _selectedClipDurationSeconds, _playheadSeconds, _trimStartSeconds + MinimumTrimDurationSeconds);
         ApplyCurrentEditorStateToSelectedSegment();
 
-        if (_playheadSeconds > GetSelectedSegmentTimelineStartSeconds() + GetSelectedSegmentDurationSeconds())
+        if (!UsesSingleSegmentSourceTimeline())
         {
-            _playheadSeconds = GetSelectedSegmentTimelineStartSeconds() + GetSelectedSegmentDurationSeconds();
-            SeekToPlayhead(updatePreviewPosition: true);
+            NormalizeTimelineSegmentPositions();
+        }
+
+        _playheadSeconds = ClampTimelinePlayhead(_playheadSeconds);
+        SeekToPlayhead(updatePreviewPosition: true);
+        return;
+    }
+
+    private void TrimThumb_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (_selectedTimelineSegment is null)
+        {
             return;
         }
 
-        UpdateTimelineVisuals();
+        if (!UsesSingleSegmentSourceTimeline())
+        {
+            NormalizeTimelineSegmentPositions();
+        }
+
+        _playheadSeconds = sender == TrimStartThumb
+            ? GetSelectedSegmentTimelineStartSeconds()
+            : ClampTimelinePlayhead(_playheadSeconds);
+        SeekToPlayhead(updatePreviewPosition: true);
         UpdateTimelineLabel(_playheadSeconds);
     }
 
@@ -2876,24 +3212,35 @@ public partial class MainWindow : Window
         UpdateCropOverlay();
     }
 
+    private void PreviewOverlayCanvas_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_viewModel.Editor.IsSelectToolActive || GetSelectedClip() is null || PreviewMediaElement.Source is null)
+        {
+            return;
+        }
+
+        PlayPreviewButton_Click(PlayPreviewButton, new RoutedEventArgs());
+        e.Handled = true;
+    }
+
     private void CropTopLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromCorner(e.HorizontalChange, e.VerticalChange, resizeLeft: true, resizeTop: true);
+        ResizeCropFromCorner(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, resizeLeft: true, resizeTop: true);
     }
 
     private void CropTopRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromCorner(e.HorizontalChange, e.VerticalChange, resizeLeft: false, resizeTop: true);
+        ResizeCropFromCorner(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, resizeLeft: false, resizeTop: true);
     }
 
     private void CropBottomLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromCorner(e.HorizontalChange, e.VerticalChange, resizeLeft: true, resizeTop: false);
+        ResizeCropFromCorner(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, resizeLeft: true, resizeTop: false);
     }
 
     private void CropBottomRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        ResizeCropFromCorner(e.HorizontalChange, e.VerticalChange, resizeLeft: false, resizeTop: false);
+        ResizeCropFromCorner(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, resizeLeft: false, resizeTop: false);
     }
 
     private void ResetCropButton_Click(object sender, RoutedEventArgs e)
@@ -2911,16 +3258,23 @@ public partial class MainWindow : Window
 
     private async void SaveEditedAsNewButton_Click(object sender, RoutedEventArgs e)
     {
+        SaveEditedClipPopup.IsOpen = false;
         await SaveEditedClipAsync(overwriteSelected: false);
     }
 
     private async void OverwriteEditedClipButton_Click(object sender, RoutedEventArgs e)
     {
+        SaveEditedClipPopup.IsOpen = false;
         await SaveEditedClipAsync(overwriteSelected: true);
     }
 
     private async Task SaveEditedClipAsync(bool overwriteSelected)
     {
+        if (_isEditorSaveInProgress)
+        {
+            return;
+        }
+
         var selectedClip = GetSelectedClip();
 
         if (selectedClip is null)
@@ -2928,53 +3282,270 @@ public partial class MainWindow : Window
             return;
         }
 
+        var sourcePath = selectedClip.FilePath;
+        var currentSelectedPath = GetSelectedClip()?.FilePath;
+        var fallbackPreferredPath = string.Equals(currentSelectedPath, sourcePath, StringComparison.OrdinalIgnoreCase)
+            ? overwriteSelected ? sourcePath : BuildEditedOutputPath(sourcePath)
+            : currentSelectedPath;
+        var targetPath = sourcePath;
+        var temporaryOutputPath = overwriteSelected
+            ? BuildOverwriteStagingPath(sourcePath)
+            : fallbackPreferredPath!;
+        var request = BuildTimelineEditRequest(sourcePath, temporaryOutputPath);
+        var operationId = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var saveStopwatch = Stopwatch.StartNew();
+
         _viewModel.ErrorMessage = string.Empty;
         _viewModel.EditorStatus = overwriteSelected
-            ? "Overwriting selected clip..."
-            : "Saving edited clip...";
-        _isEditorBusy = true;
+            ? "Overwriting selected clip in the background..."
+            : "Saving edited clip in the background...";
+        AppLog.Info(
+            "Editor",
+            overwriteSelected ? "Background overwrite requested." : "Background save-as-new requested.",
+            ("operation_id", operationId),
+            ("operation_kind", overwriteSelected ? "overwrite" : "save_as_new"),
+            ("source_path", sourcePath),
+            ("target_path", temporaryOutputPath),
+            ("timeline_duration_seconds", GetTimelineDurationSeconds()),
+            ("segment_count", _timelineSegments.Count),
+            ("selected_clip_path", currentSelectedPath ?? "<none>"),
+            ("save_timeout_seconds", EditorSaveTimeout.TotalSeconds));
+        SetClipProcessingState(sourcePath, isProcessing: true);
+        _isEditorSaveInProgress = true;
         UpdateEditorControlState();
-
-        var targetPath = selectedClip.FilePath;
-        var temporaryOutputPath = overwriteSelected
-            ? Path.Combine(Path.GetTempPath(), $"dualclip_edit_{Guid.NewGuid():N}.mp4")
-            : BuildEditedOutputPath(selectedClip.FilePath);
 
         try
         {
-            StopPreview(clearSource: true);
-            await Dispatcher.Yield(DispatcherPriority.Background);
+            using var exportTimeoutCts = new CancellationTokenSource(EditorSaveTimeout);
 
-            var request = BuildTimelineEditRequest(selectedClip.FilePath, temporaryOutputPath);
-            await _timelineEditor.ExportAsync(request, CancellationToken.None);
+            try
+            {
+                await _timelineEditor.ExportAsync(request, exportTimeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (exportTimeoutCts.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"DualClip stopped the edit because ffmpeg did not finish within {EditorSaveTimeout.TotalMinutes:0} minutes.");
+            }
+
+            AppLog.Info(
+                "Editor",
+                "Edited clip export completed.",
+                ("operation_id", operationId),
+                ("operation_kind", overwriteSelected ? "overwrite" : "save_as_new"),
+                ("staged_output_path", temporaryOutputPath),
+                ("elapsed_ms", saveStopwatch.ElapsedMilliseconds));
 
             if (overwriteSelected)
             {
-                File.Move(temporaryOutputPath, targetPath, overwrite: true);
+                await PrepareClipForOverwriteAsync(targetPath);
+                await Task.Run(() => ReplaceClipWithStagedExport(targetPath, temporaryOutputPath, operationId));
             }
             else
             {
                 targetPath = temporaryOutputPath;
             }
 
-            RefreshClipLibrary(targetPath);
-            ClipListBox.SelectedItem = _viewModel.ClipLibrary.FirstOrDefault(item =>
-                string.Equals(item.FilePath, targetPath, StringComparison.OrdinalIgnoreCase));
+            await FinalizeEditedClipSaveAsync(sourcePath, targetPath, fallbackPreferredPath, overwriteSelected);
+            AppLog.Info(
+                "Editor",
+                overwriteSelected ? "Background overwrite completed." : "Background save-as-new completed.",
+                ("operation_id", operationId),
+                ("operation_kind", overwriteSelected ? "overwrite" : "save_as_new"),
+                ("source_path", sourcePath),
+                ("target_path", targetPath),
+                ("elapsed_ms", saveStopwatch.ElapsedMilliseconds));
             _viewModel.EditorStatus = overwriteSelected
                 ? $"Rewrote {Path.GetFileName(targetPath)}."
                 : $"Saved {Path.GetFileName(targetPath)}.";
         }
         catch (Exception ex)
         {
+            AppLog.Error(
+                "Editor",
+                overwriteSelected ? "Background overwrite failed." : "Background save-as-new failed.",
+                ex,
+                ("operation_id", operationId),
+                ("operation_kind", overwriteSelected ? "overwrite" : "save_as_new"),
+                ("source_path", sourcePath),
+                ("target_path", temporaryOutputPath),
+                ("elapsed_ms", saveStopwatch.ElapsedMilliseconds));
             _viewModel.ErrorMessage = ex.Message;
             _viewModel.EditorStatus = $"Edit failed: {ex.Message}";
             TryDeleteFile(temporaryOutputPath);
         }
         finally
         {
-            _isEditorBusy = false;
+            _isEditorSaveInProgress = false;
+            SetClipProcessingState(sourcePath, isProcessing: false);
             UpdateEditorControlState();
         }
+    }
+
+    private void SaveEditedClipButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isEditorSaveInProgress || GetSelectedClip() is null || GetTimelineDurationSeconds() <= 0)
+        {
+            return;
+        }
+
+        SaveEditedClipPopup.IsOpen = !SaveEditedClipPopup.IsOpen;
+    }
+
+    private void OpenClipLocationButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedClip = GetSelectedClip();
+
+        if (selectedClip is null || string.IsNullOrWhiteSpace(selectedClip.FilePath))
+        {
+            return;
+        }
+
+        try
+        {
+            if (!File.Exists(selectedClip.FilePath))
+            {
+                throw new FileNotFoundException("The selected clip file could not be found.", selectedClip.FilePath);
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{selectedClip.FilePath}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ErrorMessage = ex.Message;
+        }
+    }
+
+    private static void ReplaceClipWithStagedExport(string targetPath, string stagedPath, string operationId)
+    {
+        if (!File.Exists(stagedPath))
+        {
+            throw new FileNotFoundException("The staged edited clip could not be found.", stagedPath);
+        }
+
+        if (!File.Exists(targetPath))
+        {
+            throw new FileNotFoundException("The original clip could not be found for overwrite.", targetPath);
+        }
+
+        var backupPath = BuildOverwriteBackupPath(targetPath);
+        var delay = OverwriteReplaceInitialDelay;
+        IOException? lastIoException = null;
+
+        for (var attempt = 1; attempt <= OverwriteReplaceRetryCount; attempt++)
+        {
+            try
+            {
+                TryDeleteFile(backupPath);
+                File.Replace(stagedPath, targetPath, backupPath, ignoreMetadataErrors: true);
+                TryDeleteFile(backupPath);
+                AppLog.Info(
+                    "Editor",
+                    "Overwrite replace completed.",
+                    ("operation_id", operationId),
+                    ("attempt", attempt),
+                    ("target_path", targetPath));
+                return;
+            }
+            catch (IOException ex) when (attempt < OverwriteReplaceRetryCount)
+            {
+                lastIoException = ex;
+                AppLog.Warn(
+                    "Editor",
+                    "Overwrite replace hit a file lock. Retrying.",
+                    ("operation_id", operationId),
+                    ("attempt", attempt),
+                    ("retry_delay_ms", delay.TotalMilliseconds),
+                    ("target_path", targetPath),
+                    ("staged_path", stagedPath),
+                    ("backup_path", backupPath),
+                    ("exception_message", ex.Message));
+                Thread.Sleep(delay);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2d, 4000d));
+            }
+        }
+
+        throw new IOException(
+            $"DualClip could not replace the original clip after {OverwriteReplaceRetryCount} attempts because the file stayed locked.",
+            lastIoException);
+    }
+
+    private async Task PrepareClipForOverwriteAsync(string targetPath)
+    {
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                if (string.Equals(GetSelectedClip()?.FilePath, targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    StopPreview(clearSource: true);
+                }
+            },
+            DispatcherPriority.Send);
+
+        await Task.Delay(120);
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        await Task.Delay(120);
+        AppLog.Info(
+            "Editor",
+            "Prepared clip for overwrite swap.",
+            ("target_path", targetPath));
+    }
+
+    private async Task FinalizeEditedClipSaveAsync(
+        string sourcePath,
+        string targetPath,
+        string? fallbackPreferredPath,
+        bool overwriteSelected)
+    {
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                var preferredPath = ResolvePreferredPathAfterSave(sourcePath, targetPath, fallbackPreferredPath);
+                RefreshClipLibrary(preferredPath);
+
+                if (!overwriteSelected)
+                {
+                    return;
+                }
+
+                var selectedClip = GetSelectedClip();
+
+                if (!string.Equals(selectedClip?.FilePath, targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                AppLog.Info(
+                    "Editor",
+                    "Reloading overwritten clip from disk after save.",
+                    ("clip_path", targetPath));
+                LoadSelectedClip();
+            },
+            DispatcherPriority.Background);
+    }
+
+    private string? ResolvePreferredPathAfterSave(string sourcePath, string targetPath, string? fallbackPreferredPath)
+    {
+        var selectedPath = GetSelectedClip()?.FilePath;
+
+        if (string.Equals(selectedPath, sourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return targetPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return selectedPath;
+        }
+
+        return fallbackPreferredPath;
     }
 
     private void ClearLoadedClipEditorState()
@@ -2997,6 +3568,7 @@ public partial class MainWindow : Window
         _translateX = 0;
         _translateY = 0;
         _opacityPercent = 100d;
+        _isPreviewMediaReady = false;
         _flipHorizontal = false;
         _flipVertical = false;
         UpdateZoomSlidersFromState();
@@ -3022,6 +3594,7 @@ public partial class MainWindow : Window
         if (clearSource)
         {
             PreviewMediaElement.Source = null;
+            _isPreviewMediaReady = false;
         }
     }
 
@@ -3039,6 +3612,22 @@ public partial class MainWindow : Window
         }
 
         _previewTimer.Stop();
+    }
+
+    private void StopPreviewPlaybackForPlaybackCompletion()
+    {
+        _isTimelinePlaybackActive = false;
+        _previewPlaybackRequestId++;
+        _previewTimer.Stop();
+        UpdatePreviewPlaybackButtonVisualState();
+
+        try
+        {
+            PreviewMediaElement.Stop();
+        }
+        catch
+        {
+        }
     }
 
     private bool TryContinuePreviewPlaybackAtNextSegment()
@@ -3062,7 +3651,7 @@ public partial class MainWindow : Window
 
     private void SeekToPlayhead(bool updatePreviewPosition)
     {
-        _playheadSeconds = Math.Clamp(_playheadSeconds, 0, GetTimelineDurationSeconds());
+        _playheadSeconds = ClampTimelinePlayhead(_playheadSeconds);
 
         if (updatePreviewPosition && PreviewMediaElement.Source is not null &&
             TryFindSegmentAtTimelineTime(_playheadSeconds, out var segment, out _, out var localOffsetSeconds) &&
@@ -3090,7 +3679,7 @@ public partial class MainWindow : Window
             SelectTimelineSegment(segment);
         }
 
-        _playheadSeconds = Math.Clamp(timelineTimeSeconds, 0, GetTimelineDurationSeconds());
+        _playheadSeconds = ClampTimelinePlayhead(timelineTimeSeconds);
         PreviewMediaElement.SpeedRatio = 1.0d;
         SetPreviewPositionSeconds(segment.SourceStartSeconds + localOffsetSeconds);
         _isTimelinePlaybackActive = true;
@@ -3119,7 +3708,44 @@ public partial class MainWindow : Window
 
     private void SetPreviewPositionSeconds(double positionSeconds)
     {
-        PreviewMediaElement.Position = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, _selectedClipDurationSeconds));
+        var maxSeekSeconds = _selectedClipDurationSeconds <= 0
+            ? 0
+            : Math.Max(0, _selectedClipDurationSeconds - PreviewSeekEndGuardSeconds);
+        PreviewMediaElement.Position = TimeSpan.FromSeconds(Math.Clamp(positionSeconds, 0, maxSeekSeconds));
+    }
+
+    private void PreviewVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        _previewVolumePercent = e.NewValue;
+        RefreshPreviewVolume();
+    }
+
+    private void RefreshPreviewVolume()
+    {
+        try
+        {
+            PreviewMediaElement.Volume = Math.Clamp(_previewVolumePercent / 100d, 0d, 1d);
+        }
+        catch
+        {
+        }
+    }
+
+    private void OpenLogsButton_Click(object sender, RoutedEventArgs e)
+    {
+        AppLog.Info("Logs", "Opening log viewer window.");
+        if (_logViewerWindow is null || !_logViewerWindow.IsLoaded)
+        {
+            _logViewerWindow = new LogViewerWindow
+            {
+                Owner = this,
+            };
+            _logViewerWindow.Closed += (_, _) => _logViewerWindow = null;
+            _logViewerWindow.Show();
+            return;
+        }
+
+        _logViewerWindow.Activate();
     }
 
     private void UpdateEditorVisuals()
@@ -3138,7 +3764,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        const double timelineHeight = 110d;
+        const double timelineHeight = 132d;
 
         var timelineWidth = GetTimelineCanvasWidth();
         TimelineCanvas.Width = timelineWidth;
@@ -3178,8 +3804,8 @@ public partial class MainWindow : Window
         TimelineTrackRectangle.Visibility = editorVisibility;
         TrimSelectionRectangle.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
         PlayheadLine.Visibility = editorVisibility;
-        TrimStartThumb.Visibility = Visibility.Collapsed;
-        TrimEndThumb.Visibility = Visibility.Collapsed;
+        TrimStartThumb.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
+        TrimEndThumb.Visibility = hasSelectedSegment ? Visibility.Visible : Visibility.Collapsed;
         PlayheadThumb.Visibility = editorVisibility;
 
         TrimRangeTextBlock.Text = hasSelectedSegment
@@ -3227,6 +3853,13 @@ public partial class MainWindow : Window
                 TransformMoveThumb.Visibility = Visibility.Collapsed;
             }
 
+            if (CropMoveThumb is not null)
+            {
+                CropMoveThumb.Visibility = Visibility.Collapsed;
+                CropMoveThumb.Width = 0;
+                CropMoveThumb.Height = 0;
+            }
+
             if (CropOverlayCanvas is not null)
             {
                 CropOverlayCanvas.Visibility = Visibility.Collapsed;
@@ -3258,6 +3891,11 @@ public partial class MainWindow : Window
         Canvas.SetLeft(CropSelectionBorder, 0);
         Canvas.SetTop(CropSelectionBorder, 0);
 
+        CropMoveThumb.Width = cropLocalRect.Width;
+        CropMoveThumb.Height = cropLocalRect.Height;
+        Canvas.SetLeft(CropMoveThumb, 0);
+        Canvas.SetTop(CropMoveThumb, 0);
+
         PositionCropThumb(CropTopLeftThumb, 0, 0);
         PositionCropThumb(CropTopRightThumb, cropLocalRect.Width, 0);
         PositionCropThumb(CropBottomLeftThumb, 0, cropLocalRect.Height);
@@ -3284,17 +3922,21 @@ public partial class MainWindow : Window
 
     private void UpdateEditorControlState()
     {
-        var hasClip = GetSelectedClip() is not null;
+        var selectedClip = GetSelectedClip();
+        var hasClip = selectedClip is not null;
         var hasSelectedSegment = _selectedTimelineSegment is not null;
-        var isEnabled = hasClip && hasSelectedSegment && !_isEditorBusy;
+        var isSelectedClipProcessing = selectedClip?.IsProcessing ?? false;
+        var isEnabled = hasClip && hasSelectedSegment && !_isEditorBusy && !isSelectedClipProcessing;
         var hasTimeline = hasClip && GetTimelineDurationSeconds() > 0;
+        var canSaveEditedClip = hasTimeline && !_isEditorSaveInProgress && !isSelectedClipProcessing;
+        var canInteractWithTimeline = hasTimeline && !_isEditorBusy && !isSelectedClipProcessing;
 
         PlayPreviewButton.IsEnabled = isEnabled;
-        StepBackButton.IsEnabled = hasTimeline && !_isEditorBusy;
-        StepForwardButton.IsEnabled = hasTimeline && !_isEditorBusy;
+        StepBackButton.IsEnabled = canInteractWithTimeline;
+        StepForwardButton.IsEnabled = canInteractWithTimeline;
         SplitSegmentButton.IsEnabled = isEnabled;
         CopySegmentButton.IsEnabled = isEnabled;
-        PasteSegmentButton.IsEnabled = _copiedTimelineSegment is not null && !_isEditorBusy;
+        PasteSegmentButton.IsEnabled = _copiedTimelineSegment is not null && !_isEditorBusy && !isSelectedClipProcessing;
         DeleteSegmentButton.IsEnabled = isEnabled;
         ResetCropButton.IsEnabled = isEnabled;
         RotationSlider.IsEnabled = isEnabled;
@@ -3315,13 +3957,22 @@ public partial class MainWindow : Window
         FlipHorizontalButton.IsEnabled = isEnabled;
         FlipVerticalButton.IsEnabled = isEnabled;
         ResetTransformButton.IsEnabled = isEnabled;
-        ToolCropButton.IsEnabled = hasClip && !_isEditorBusy;
-        ToolTransformButton.IsEnabled = hasClip && !_isEditorBusy;
-        SaveEditedAsNewButton.IsEnabled = hasTimeline && !_isEditorBusy;
-        OverwriteEditedClipButton.IsEnabled = hasTimeline && !_isEditorBusy;
-        TimelineCanvas.IsEnabled = hasTimeline;
-        TimelineSegmentsCanvas.IsEnabled = hasTimeline;
-        TimelineScrollViewer.IsEnabled = hasTimeline;
+        ToolSelectButton.IsEnabled = hasClip && !_isEditorBusy && !isSelectedClipProcessing;
+        ToolCropButton.IsEnabled = hasClip && !_isEditorBusy && !isSelectedClipProcessing;
+        ToolTransformButton.IsEnabled = hasClip && !_isEditorBusy && !isSelectedClipProcessing;
+        OpenClipLocationButton.IsEnabled = hasClip && !isSelectedClipProcessing;
+        SaveEditedClipButton.IsEnabled = canSaveEditedClip;
+        SaveEditedAsNewButton.IsEnabled = canSaveEditedClip;
+        OverwriteEditedClipButton.IsEnabled = canSaveEditedClip;
+        TimelineCanvas.IsEnabled = canInteractWithTimeline;
+        TimelineSegmentsCanvas.IsEnabled = canInteractWithTimeline;
+        TimelineScrollViewer.IsEnabled = canInteractWithTimeline;
+
+        if (!canSaveEditedClip)
+        {
+            SaveEditedClipPopup.IsOpen = false;
+        }
+
         UpdatePreviewPlaybackButtonVisualState();
         UpdateClipLibraryAutoRefreshState();
     }
@@ -3334,8 +3985,8 @@ public partial class MainWindow : Window
         }
 
         PlayPreviewButtonGlyph.Text = _isTimelinePlaybackActive ? "\uE769" : "\uE768";
-        PlayPreviewButtonLabel.Text = _isTimelinePlaybackActive ? "Pause (Space)" : "Play (Space)";
-        PlayPreviewButton.ToolTip = _isTimelinePlaybackActive ? "Pause preview (Space)" : "Play preview (Space)";
+        PlayPreviewButtonLabel.Text = _isTimelinePlaybackActive ? "Pause" : "Play";
+        PlayPreviewButton.ToolTip = _isTimelinePlaybackActive ? "Pause preview" : "Play preview";
     }
 
     private ClipLibraryItem? GetSelectedClip()
@@ -3350,9 +4001,23 @@ public partial class MainWindow : Window
         return Path.Combine(directory, $"{fileNameWithoutExtension}_edited_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
     }
 
+    private static string BuildOverwriteStagingPath(string sourcePath)
+    {
+        var directory = Path.GetDirectoryName(sourcePath)!;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(sourcePath);
+        return Path.Combine(directory, $"{fileNameWithoutExtension}_overwrite_stage_{Guid.NewGuid():N}.mp4");
+    }
+
+    private static string BuildOverwriteBackupPath(string sourcePath)
+    {
+        var directory = Path.GetDirectoryName(sourcePath)!;
+        var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(sourcePath);
+        return Path.Combine(directory, $"{fileNameWithoutExtension}_overwrite_backup_{Guid.NewGuid():N}.dualclipbak");
+    }
+
     private double TimelineDeltaToTime(double deltaX)
     {
-        if (GetTimelineDurationSeconds() <= 0)
+        if (GetTimelineDisplayDurationSeconds() <= 0)
         {
             return 0;
         }
@@ -3362,22 +4027,22 @@ public partial class MainWindow : Window
 
     private double TimeToTimelineX(double seconds)
     {
-        if (GetTimelineDurationSeconds() <= 0)
+        if (GetTimelineDisplayDurationSeconds() <= 0)
         {
             return TimelineLeftPaddingPixels;
         }
 
-        return TimelineLeftPaddingPixels + (Math.Clamp(seconds, 0, GetTimelineDurationSeconds()) * GetTimelinePixelsPerSecond());
+        return TimelineLeftPaddingPixels + (Math.Clamp(seconds, 0, GetTimelineDisplayDurationSeconds()) * GetTimelinePixelsPerSecond());
     }
 
     private double TimelineXToTime(double x)
     {
-        if (GetTimelineDurationSeconds() <= 0)
+        if (GetTimelineDisplayDurationSeconds() <= 0)
         {
             return 0;
         }
 
-        return Math.Clamp((x - TimelineLeftPaddingPixels) / Math.Max(1d, GetTimelinePixelsPerSecond()), 0, GetTimelineDurationSeconds());
+        return Math.Clamp((x - TimelineLeftPaddingPixels) / Math.Max(1d, GetTimelinePixelsPerSecond()), 0, GetTimelineDisplayDurationSeconds());
     }
 
     private static void PositionTimelineThumb(FrameworkElement element, double centerX, double top)
@@ -3411,6 +4076,7 @@ public partial class MainWindow : Window
         CropRightThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
         CropBottomThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
         CropLeftThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
+        CropMoveThumb.Visibility = showCropTool ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private bool TryGetPreviewScale(out double scaleX, out double scaleY)
@@ -3428,7 +4094,7 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private bool TryGetPreviewSourceDelta(double horizontalChange, double verticalChange, out double deltaX, out double deltaY)
+    private bool TryGetPreviewSourceDelta(FrameworkElement? dragSource, double horizontalChange, double verticalChange, out double deltaX, out double deltaY)
     {
         deltaX = 0;
         deltaY = 0;
@@ -3441,18 +4107,16 @@ public partial class MainWindow : Window
         var localDeltaX = horizontalChange;
         var localDeltaY = verticalChange;
 
-        if (CropOverlayCanvas is not null && CropOverlayCanvas.Visibility == Visibility.Visible)
+        if (dragSource is not null)
         {
             try
             {
-                var hostToOverlay = PreviewHost.TransformToDescendant(CropOverlayCanvas);
+                var dragToPreview = dragSource.TransformToVisual(PreviewHost);
 
-                if (hostToOverlay.TryTransform(new System.Windows.Point(0, 0), out var localOrigin)
-                    && hostToOverlay.TryTransform(new System.Windows.Point(horizontalChange, verticalChange), out var localPoint))
-                {
-                    localDeltaX = localPoint.X - localOrigin.X;
-                    localDeltaY = localPoint.Y - localOrigin.Y;
-                }
+                var localOrigin = dragToPreview.Transform(new System.Windows.Point(0, 0));
+                var localPoint = dragToPreview.Transform(new System.Windows.Point(horizontalChange, verticalChange));
+                localDeltaX = localPoint.X - localOrigin.X;
+                localDeltaY = localPoint.Y - localOrigin.Y;
             }
             catch (InvalidOperationException)
             {
@@ -3464,9 +4128,9 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private void ResizeCropFromCorner(double horizontalChange, double verticalChange, bool resizeLeft, bool resizeTop)
+    private void ResizeCropFromCorner(FrameworkElement? dragSource, double horizontalChange, double verticalChange, bool resizeLeft, bool resizeTop)
     {
-        if (!TryGetPreviewSourceDelta(horizontalChange, verticalChange, out var deltaX, out var deltaY))
+        if (!TryGetPreviewSourceDelta(dragSource, horizontalChange, verticalChange, out var deltaX, out var deltaY))
         {
             return;
         }

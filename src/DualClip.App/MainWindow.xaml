@@ -10,6 +10,7 @@
         Background="#0F1318"
         Foreground="#EEF2FA"
         Icon="Assets/DualClipLogo.png"
+        WindowStartupLocation="Manual"
         WindowStyle="None"
         ResizeMode="CanResize"
         Loaded="Window_Loaded"
@@ -357,6 +358,96 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <Style x:Key="ViewportVolumeSliderStyle" TargetType="Slider">
+            <Setter Property="Width" Value="152" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Foreground" Value="#EAF1FF" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Height="24">
+                            <Border Height="3"
+                                    VerticalAlignment="Center"
+                                    Background="#3FFFFFFF"
+                                    CornerRadius="2" />
+                            <Track x:Name="PART_Track"
+                                   VerticalAlignment="Center">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge"
+                                                  Background="#D6E7FF"
+                                                  Style="{StaticResource SliderTrackButtonStyle}" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="14"
+                                           Height="14">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Ellipse Fill="#F7FBFF"
+                                                         Stroke="#233653"
+                                                         StrokeThickness="1.2" />
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge"
+                                                  Background="#35FFFFFF"
+                                                  Style="{StaticResource SliderTrackButtonStyle}" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PreviewHoverRevealStyle" TargetType="FrameworkElement">
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TranslateTransform Y="26" />
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsMouseOver, ElementName=PreviewHost}" Value="True">
+                    <Setter Property="IsHitTestVisible" Value="True" />
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard>
+                            <Storyboard FillBehavior="HoldEnd">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                 To="1"
+                                                 Duration="0:0:0.22" />
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                                 To="0"
+                                                 Duration="0:0:0.22">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseOut" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <BeginStoryboard>
+                            <Storyboard FillBehavior="HoldEnd">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                 To="0"
+                                                 Duration="0:0:0.22" />
+                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)"
+                                                 To="26"
+                                                 Duration="0:0:0.22">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseIn" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
 
         <Style TargetType="Button">
@@ -1013,6 +1104,20 @@
                 </DataTrigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="UpdateBlurHostStyle" TargetType="Grid">
+            <Setter Property="Opacity" Value="1" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsUpdateOverlayVisible}" Value="True">
+                    <Setter Property="Opacity" Value="0.62" />
+                    <Setter Property="Effect">
+                        <Setter.Value>
+                            <BlurEffect Radius="18" RenderingBias="Quality" />
+                        </Setter.Value>
+                    </Setter>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
     <Border x:Name="WindowFrameBorder"
             Background="{StaticResource WindowBrush}"
@@ -1025,13 +1130,21 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <Border x:Name="WindowTitleBarBorder"
-                    Grid.Row="0"
-                    Padding="12,10,12,8"
-                    Background="{StaticResource PanelAltBrush}"
-                    BorderBrush="{StaticResource BorderBrushDark}"
-                    BorderThickness="0,0,0,1"
-                    CornerRadius="18,18,0,0">
+            <Grid x:Name="MainContentHost"
+                  Grid.RowSpan="2"
+                  Style="{StaticResource UpdateBlurHostStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border x:Name="WindowTitleBarBorder"
+                        Grid.Row="0"
+                        Padding="12,10,12,8"
+                        Background="{StaticResource PanelAltBrush}"
+                        BorderBrush="{StaticResource BorderBrushDark}"
+                        BorderThickness="0,0,0,1"
+                        CornerRadius="18,18,0,0">
                 <Grid Height="34">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -1227,7 +1340,7 @@
                     CornerRadius="10">
                 <DockPanel LastChildFill="False">
                     <StackPanel Orientation="Horizontal"
-                                DockPanel.Dock="Right">
+                                DockPanel.Dock="Left">
                         <RadioButton GroupName="MainSections"
                                      Margin="0,0,10,0"
                                      Style="{StaticResource MainTabRadioButtonStyle}"
@@ -1242,13 +1355,41 @@
                 </DockPanel>
             </Border>
 
-            <Grid Grid.Row="3" Margin="0,0,0,12" Style="{StaticResource ShowOnSettingsTabStyle}" IsEnabled="{Binding CanStart}">
+            <Grid Grid.Row="3" Margin="0,0,0,12" Style="{StaticResource ShowOnSettingsTabStyle}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="360" />
                 </Grid.ColumnDefinitions>
 
-                <GroupBox Header="Monitor Nodes" Margin="0,0,8,0" Padding="12">
+                <Border Grid.Row="0"
+                        Grid.ColumnSpan="2"
+                        Margin="0,0,0,12"
+                        Padding="12,10"
+                        Background="#3A342200"
+                        BorderBrush="#B88E3C"
+                        BorderThickness="1"
+                        CornerRadius="10">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCapturing}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <TextBlock Foreground="#F4C95D"
+                               FontWeight="SemiBold"
+                               Text="Capture is currently running. Settings are locked until all clipping sessions are stopped."
+                               TextWrapping="Wrap" />
+                </Border>
+
+                <GroupBox Grid.Row="1" Header="Monitor Nodes" Margin="0,0,8,0" Padding="12" IsEnabled="{Binding CanStart}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -1357,7 +1498,7 @@
                     </Grid>
                 </GroupBox>
 
-                <GroupBox Grid.Column="1" Header="Capture Settings" Margin="8,0,0,0" Padding="12">
+                <GroupBox Grid.Row="1" Grid.Column="1" Header="Capture Settings" Margin="8,0,0,0" Padding="12" IsEnabled="{Binding CanStart}">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -1463,6 +1604,17 @@
                                                 IsEnabled="{Binding CanInstallUpdate}"
                                                 Content="{Binding InstallUpdateButtonText}" />
                                     </WrapPanel>
+                                    <WrapPanel Margin="0,12,0,0">
+                                        <Button Padding="12,4"
+                                                Style="{StaticResource GhostButtonStyle}"
+                                                Click="OpenLogsButton_Click"
+                                                Content="Logs" />
+                                        <TextBlock Margin="10,0,0,0"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{StaticResource MutedTextBrush}"
+                                                   Text="Open the runtime log viewer for debugging and export."
+                                                   TextWrapping="Wrap" />
+                                    </WrapPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -1475,6 +1627,23 @@
             <Border Grid.Row="5" Style="{StaticResource ShowOnSettingsTabStyle}" Visibility="Collapsed" />
 
             <StackPanel Grid.Row="6" Style="{StaticResource ShowOnCaptureTabStyle}">
+                <WrapPanel Margin="0,0,0,12">
+                    <Button Margin="0,0,8,0"
+                            Padding="14,6"
+                            Click="StartCaptureButton_Click"
+                            IsEnabled="{Binding CanStart}"
+                            Content="Start All" />
+                    <Button Margin="0,0,8,0"
+                            Padding="14,6"
+                            Click="StopCaptureButton_Click"
+                            IsEnabled="{Binding CanStop}"
+                            Content="Stop All" />
+                    <Button Padding="14,6"
+                            Style="{StaticResource GhostButtonStyle}"
+                            Click="SaveAllMonitorNodesButton_Click"
+                            IsEnabled="{Binding CanSaveAll}"
+                            Content="Save All Active Clips" />
+                </WrapPanel>
                 <ItemsControl ItemsSource="{Binding MonitorNodes}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -1505,7 +1674,7 @@
                                                 Padding="12,6"
                                                 Click="ToggleMonitorNodeCaptureButton_Click">
                                             <Button.Style>
-                                                <Style TargetType="Button">
+                                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                                     <Setter Property="Content" Value="Start Clipping" />
                                                     <Style.Triggers>
                                                         <DataTrigger Binding="{Binding IsCapturing}" Value="True">
@@ -1637,10 +1806,56 @@
                                                                                    Text="Generating preview" />
                                                                     </StackPanel>
                                                                 </Border>
+                                                                <Border x:Name="ClipProcessingOverlay"
+                                                                        Background="#B8141F2C"
+                                                                        CornerRadius="11,11,0,0"
+                                                                        Visibility="Collapsed">
+                                                                    <StackPanel HorizontalAlignment="Center"
+                                                                                VerticalAlignment="Center">
+                                                                        <Grid Width="26"
+                                                                              Height="26"
+                                                                              Margin="0,0,0,8"
+                                                                              RenderTransformOrigin="0.5,0.5">
+                                                                            <Grid.RenderTransform>
+                                                                                <RotateTransform />
+                                                                            </Grid.RenderTransform>
+                                                                            <Grid.Triggers>
+                                                                                <EventTrigger RoutedEvent="Loaded">
+                                                                                    <BeginStoryboard>
+                                                                                        <Storyboard RepeatBehavior="Forever">
+                                                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                                             From="0"
+                                                                                                             To="360"
+                                                                                                             Duration="0:0:1" />
+                                                                                        </Storyboard>
+                                                                                    </BeginStoryboard>
+                                                                                </EventTrigger>
+                                                                            </Grid.Triggers>
+                                                                            <Ellipse Width="22"
+                                                                                     Height="22"
+                                                                                     Stroke="#2BFFFFFF"
+                                                                                     StrokeThickness="2.5" />
+                                                                            <Path Width="22"
+                                                                                  Height="22"
+                                                                                  Data="M 11,2 A 9,9 0 1 1 4,17"
+                                                                                  Stretch="Fill"
+                                                                                  Stroke="#F3F8FF"
+                                                                                  StrokeThickness="2.5"
+                                                                                  StrokeStartLineCap="Round"
+                                                                                  StrokeEndLineCap="Round" />
+                                                                        </Grid>
+                                                                        <TextBlock HorizontalAlignment="Center"
+                                                                                   FontSize="10"
+                                                                                   FontWeight="SemiBold"
+                                                                                   Foreground="#F3F8FF"
+                                                                                   Text="Processing" />
+                                                                    </StackPanel>
+                                                                </Border>
                                                             </Grid>
                                                         </Border>
 
-                                                        <Button Width="28"
+                                                        <Button x:Name="DeleteClipButton"
+                                                                Width="28"
                                                                 Height="28"
                                                                 Margin="0,8,8,0"
                                                                 Padding="0"
@@ -1663,31 +1878,10 @@
                                                             <RowDefinition Height="Auto" />
                                                         </Grid.RowDefinitions>
 
-                                                        <Button x:Name="ClipTitleButton"
-                                                                Style="{StaticResource ClipTitleButtonStyle}"
-                                                                Click="RenameClipTitleButton_Click"
-                                                                ToolTip="Rename clip">
-                                                            <TextBlock TextTrimming="CharacterEllipsis">
-                                                                <Run Text="{Binding FileNameWithoutExtension, Mode=OneWay}" />
-                                                                <Run Text="{Binding FileExtension, Mode=OneWay}" />
-                                                            </TextBlock>
-                                                        </Button>
-
-                                                        <DockPanel x:Name="ClipRenameEditor"
-                                                                   Visibility="Collapsed"
-                                                                   LastChildFill="False">
-                                                            <TextBox MinWidth="72"
-                                                                     Padding="4,2"
-                                                                     VerticalContentAlignment="Center"
-                                                                     Text="{Binding EditableFileName, UpdateSourceTrigger=PropertyChanged}"
-                                                                     Loaded="ClipTitleRenameTextBox_Loaded"
-                                                                     LostFocus="ClipTitleRenameTextBox_LostFocus"
-                                                                     PreviewKeyDown="ClipTitleRenameTextBox_PreviewKeyDown" />
-                                                            <TextBlock Margin="4,0,0,0"
-                                                                       VerticalAlignment="Center"
-                                                                       FontWeight="SemiBold"
-                                                                       Text="{Binding FileExtension, Mode=OneWay}" />
-                                                        </DockPanel>
+                                                        <TextBlock TextTrimming="CharacterEllipsis">
+                                                            <Run Text="{Binding FileNameWithoutExtension, Mode=OneWay}" />
+                                                            <Run Text="{Binding FileExtension, Mode=OneWay}" />
+                                                        </TextBlock>
 
                                                         <TextBlock Grid.Row="1"
                                                                    Margin="0,8,0,0"
@@ -1711,12 +1905,13 @@
                                                 <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
                                                     <Setter TargetName="ClipCardBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
                                                 </DataTrigger>
-                                                <DataTrigger Binding="{Binding IsRenaming}" Value="True">
-                                                    <Setter TargetName="ClipTitleButton" Property="Visibility" Value="Collapsed" />
-                                                    <Setter TargetName="ClipRenameEditor" Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
                                                 <DataTrigger Binding="{Binding HasThumbnail}" Value="True">
                                                     <Setter TargetName="ClipPreviewFallback" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsProcessing}" Value="True">
+                                                    <Setter TargetName="ClipProcessingOverlay" Property="Visibility" Value="Visible" />
+                                                    <Setter TargetName="DeleteClipButton" Property="IsEnabled" Value="False" />
+                                                    <Setter TargetName="DeleteClipButton" Property="Opacity" Value="0.45" />
                                                 </DataTrigger>
                                             </DataTemplate.Triggers>
                                         </DataTemplate>
@@ -1917,15 +2112,13 @@
                                 </Grid>
 
                                 <WrapPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <Button x:Name="SaveEditedAsNewButton"
-                                            Margin="0,0,8,0"
-                                            Click="SaveEditedAsNewButton_Click"
-                                            Content="Save As New" />
-                                    <Button x:Name="OverwriteEditedClipButton"
-                                            Margin="0,0,12,0"
-                                            Click="OverwriteEditedClipButton_Click"
-                                            Content="Overwrite Original"
-                                            ToolTip="Replace the selected clip with the edited version" />
+                                    <ToggleButton x:Name="ToolSelectButton"
+                                                  Margin="0,0,8,0"
+                                                  Style="{StaticResource EditorToolToggleButtonStyle}"
+                                                  Click="EditorToolToggleButton_Click"
+                                                  Tag="select"
+                                                  ToolTip="Default selection mode. Click the preview to play or pause."
+                                                  Content="Select" />
                                     <ToggleButton x:Name="ToolCropButton"
                                                   Margin="0,0,8,0"
                                                   Style="{StaticResource EditorToolToggleButtonStyle}"
@@ -1947,9 +2140,9 @@
                                 Margin="0,0,0,10"
                                 Padding="0"
                                 Background="{StaticResource SurfaceBrush}"
-                                BorderBrush="{StaticResource BorderBrushDark}"
-                                BorderThickness="1"
-                                CornerRadius="12">
+                                BorderBrush="#5B6470"
+                                BorderThickness="1.5"
+                                CornerRadius="18">
                                 <Grid>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="560" />
@@ -1970,18 +2163,68 @@
                                           SizeChanged="PreviewHost_SizeChanged">
                                         <Canvas x:Name="PreviewOverlayCanvas"
                                                 Background="Black"
-                                                IsHitTestVisible="True">
+                                                IsHitTestVisible="True"
+                                                MouseLeftButtonDown="PreviewOverlayCanvas_MouseLeftButtonDown">
                                             <Border x:Name="PreviewVideoPresenter"
                                                     Background="Black"
-                                                    BorderBrush="{StaticResource BorderBrushDark}"
-                                                    BorderThickness="2"
+                                                    BorderBrush="#798391"
+                                                    BorderThickness="2.5"
                                                     ClipToBounds="True"
-                                                    CornerRadius="14"
+                                                    CornerRadius="20"
                                                     SnapsToDevicePixels="True">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Opacity" Value="1" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ElementName=ClipListBox, Path=SelectedItem.IsProcessing}" Value="True">
+                                                                <Setter Property="Opacity" Value="0.55" />
+                                                                <Setter Property="Effect">
+                                                                    <Setter.Value>
+                                                                        <BlurEffect Radius="18"
+                                                                                    RenderingBias="Quality" />
+                                                                    </Setter.Value>
+                                                                </Setter>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
                                                 <Grid x:Name="PreviewMediaHost"
                                                       HorizontalAlignment="Left"
                                                       VerticalAlignment="Top" />
                                             </Border>
+
+                                            <Rectangle Width="1280"
+                                                       Height="170"
+                                                       Canvas.Top="550"
+                                                       IsHitTestVisible="False"
+                                                       Style="{StaticResource PreviewHoverRevealStyle}">
+                                                <Rectangle.Fill>
+                                                    <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                                                        <GradientStop Color="#00101824" Offset="0" />
+                                                        <GradientStop Color="#660B1522" Offset="0.72" />
+                                                        <GradientStop Color="#D9101B2A" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Rectangle.Fill>
+                                            </Rectangle>
+
+                                            <StackPanel Canvas.Left="24"
+                                                        Canvas.Top="662"
+                                                        Orientation="Horizontal"
+                                                        VerticalAlignment="Bottom"
+                                                        Style="{StaticResource PreviewHoverRevealStyle}">
+                                                <TextBlock Margin="0,0,10,0"
+                                                           VerticalAlignment="Center"
+                                                           FontFamily="Segoe MDL2 Assets"
+                                                           FontSize="20"
+                                                           Foreground="#F4F8FF"
+                                                           Text="&#xE767;" />
+                                                <Slider x:Name="PreviewVolumeSlider"
+                                                        Minimum="0"
+                                                        Maximum="100"
+                                                        Value="100"
+                                                        Style="{StaticResource ViewportVolumeSliderStyle}"
+                                                        ValueChanged="PreviewVolumeSlider_ValueChanged" />
+                                            </StackPanel>
 
                                             <Border x:Name="TransformSelectionBorder"
                                                     Width="0"
@@ -2018,6 +2261,15 @@
                                                         IsHitTestVisible="False"
                                                         CornerRadius="6"
                                                         Visibility="Collapsed" />
+
+                                                <Thumb x:Name="CropMoveThumb"
+                                                       Width="0"
+                                                       Height="0"
+                                                       Style="{StaticResource CropMoveThumbStyle}"
+                                                       Cursor="SizeAll"
+                                                       Visibility="Collapsed"
+                                                       DragStarted="EditorMutationThumb_DragStarted"
+                                                       DragDelta="CropMoveThumb_DragDelta" />
 
                                                 <Thumb x:Name="CropTopThumb"
                                                        Style="{StaticResource CropEdgeThumbStyle}"
@@ -2076,8 +2328,83 @@
 
                                         </Canvas>
 
+                                        <Grid x:Name="PreviewProcessingOverlay"
+                                              Panel.ZIndex="40"
+                                              HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch"
+                                              Background="#7A0A121C"
+                                              IsHitTestVisible="True"
+                                              Visibility="Collapsed">
+                                            <Border Background="#55101724"
+                                                    CornerRadius="20" />
+                                            <Border Padding="34,28"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Background="#D9141C26"
+                                                    BorderBrush="#38FFFFFF"
+                                                    BorderThickness="1"
+                                                    CornerRadius="22">
+                                                <StackPanel HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center">
+                                                    <Grid Width="72"
+                                                          Height="72"
+                                                          Margin="0,0,0,18"
+                                                          RenderTransformOrigin="0.5,0.5">
+                                                        <Grid.RenderTransform>
+                                                            <RotateTransform />
+                                                        </Grid.RenderTransform>
+                                                        <Grid.Triggers>
+                                                            <EventTrigger RoutedEvent="Loaded">
+                                                                <BeginStoryboard>
+                                                                    <Storyboard RepeatBehavior="Forever">
+                                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                         From="0"
+                                                                                         To="360"
+                                                                                         Duration="0:0:1.02" />
+                                                                    </Storyboard>
+                                                                </BeginStoryboard>
+                                                            </EventTrigger>
+                                                        </Grid.Triggers>
+                                                        <Ellipse Width="58"
+                                                                 Height="58"
+                                                                 Stroke="#275A6E82"
+                                                                 StrokeThickness="5" />
+                                                        <Path Width="58"
+                                                              Height="58"
+                                                              Data="M 29,4 A 24,24 0 1 1 9,45"
+                                                              Stretch="Fill"
+                                                              Stroke="#F1F7FF"
+                                                              StrokeThickness="5"
+                                                              StrokeStartLineCap="Round"
+                                                              StrokeEndLineCap="Round" />
+                                                    </Grid>
+                                                    <TextBlock HorizontalAlignment="Center"
+                                                               FontSize="24"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#F3F8FF"
+                                                               Text="Processing..." />
+                                                    <TextBlock Margin="0,8,0,0"
+                                                               HorizontalAlignment="Center"
+                                                               FontSize="13"
+                                                               Foreground="#CCF3F8FF"
+                                                               Text="This clip is still being written." />
+                                                </StackPanel>
+                                            </Border>
+                                            <Grid.Style>
+                                                <Style TargetType="Grid">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ElementName=ClipListBox, Path=SelectedItem.IsProcessing}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Grid.Style>
+                                        </Grid>
+
                                         <TextBlock HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"
+                                                   Panel.ZIndex="1"
                                                    IsHitTestVisible="False"
                                                    FontSize="28"
                                                    FontWeight="SemiBold"
@@ -2104,7 +2431,7 @@
                                                Margin="12,-32,12,4"
                                                LastChildFill="False">
                                     <WrapPanel DockPanel.Dock="Left" VerticalAlignment="Center">
-                                        <Button x:Name="PlayPreviewButton" MinWidth="112" Height="46" Margin="0,0,10,0" Padding="18,0" FontSize="15" Style="{StaticResource GhostButtonStyle}" Click="PlayPreviewButton_Click" ToolTip="Play preview">
+                                        <Button x:Name="PlayPreviewButton" Width="112" Height="46" Margin="0,0,10,0" Padding="18,0" FontSize="15" Style="{StaticResource GhostButtonStyle}" Click="PlayPreviewButton_Click" ToolTip="Play preview">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock x:Name="PlayPreviewButtonGlyph"
                                                            VerticalAlignment="Center"
@@ -2123,51 +2450,101 @@
                                         <Button x:Name="StepForwardButton" Style="{StaticResource GhostButtonStyle}" Click="StepForwardButton_Click" Content="Next Frame" Visibility="Collapsed" />
                                     </WrapPanel>
 
-                                    <TextBlock x:Name="TimelinePositionTextBlock"
-                                               DockPanel.Dock="Right"
-                                               VerticalAlignment="Center"
-                                               FontWeight="SemiBold"
-                                               Visibility="Collapsed"
-                                               Text="0.00s / 0.00s" />
+                                    <WrapPanel DockPanel.Dock="Right" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TimelinePositionTextBlock"
+                                                   Margin="0,0,12,0"
+                                                   VerticalAlignment="Center"
+                                                   FontWeight="SemiBold"
+                                                   Visibility="Collapsed"
+                                                   Text="0.00s / 0.00s" />
+                                        <Button x:Name="OpenClipLocationButton"
+                                                Width="46"
+                                                Height="46"
+                                                Margin="0,0,8,0"
+                                                Style="{StaticResource GhostButtonStyle}"
+                                                Click="OpenClipLocationButton_Click"
+                                                ToolTip="Open the selected clip in File Explorer">
+                                            <TextBlock FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="18"
+                                                       Text="&#xE838;" />
+                                        </Button>
+                                        <Grid>
+                                            <Button x:Name="SaveEditedClipButton"
+                                                    Width="112"
+                                                    Height="46"
+                                                    Padding="18,0"
+                                                    FontSize="15"
+                                                    Style="{StaticResource GhostButtonStyle}"
+                                                    Click="SaveEditedClipButton_Click"
+                                                    Content="Save" />
+                                            <Popup x:Name="SaveEditedClipPopup"
+                                                   PlacementTarget="{Binding ElementName=SaveEditedClipButton}"
+                                                   Placement="Top"
+                                                   StaysOpen="False">
+                                                <Border Margin="0,0,0,8"
+                                                        Padding="8"
+                                                        Background="{StaticResource PanelBrush}"
+                                                        BorderBrush="{StaticResource BorderBrushDark}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="12">
+                                                    <StackPanel>
+                                                        <Button x:Name="SaveEditedAsNewButton"
+                                                                MinWidth="156"
+                                                                Margin="0,0,0,8"
+                                                                Click="SaveEditedAsNewButton_Click"
+                                                                Content="Save As New" />
+                                                        <Button x:Name="OverwriteEditedClipButton"
+                                                                MinWidth="156"
+                                                                Click="OverwriteEditedClipButton_Click"
+                                                                Content="Overwrite Original"
+                                                                ToolTip="Replace the selected clip with the edited version" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </Popup>
+                                        </Grid>
+                                    </WrapPanel>
                                 </DockPanel>
 
                                     <ScrollViewer x:Name="TimelineScrollViewer"
                                                   Grid.Row="2"
-                                                  Margin="12,2,12,8"
+                                                  Margin="12,-2,12,4"
                                                   HorizontalScrollBarVisibility="Auto"
                                                   VerticalScrollBarVisibility="Disabled"
+                                                  SizeChanged="TimelineScrollViewer_SizeChanged"
                                                   ScrollChanged="TimelineScrollViewer_ScrollChanged">
                                         <ScrollViewer.Resources>
                                             <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource TimelineHorizontalScrollBarStyle}" />
                                         </ScrollViewer.Resources>
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="28" />
-                                                <RowDefinition Height="110" />
-                                            </Grid.RowDefinitions>
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="28" />
+                                                    <RowDefinition Height="132" />
+                                                </Grid.RowDefinitions>
 
-                                            <Canvas x:Name="TimelineRulerCanvas" Grid.Row="0" Height="28" Background="Transparent" />
+                                            <Canvas x:Name="TimelineRulerCanvas" Grid.Row="0" Height="28" Background="Transparent" MouseLeftButtonDown="TimelineRulerCanvas_MouseLeftButtonDown" />
 
                                             <Grid Grid.Row="1">
-                                                <Canvas x:Name="TimelineCanvas" Height="110" Background="Transparent" Panel.ZIndex="1" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
+                                                <Canvas x:Name="TimelineCanvas" Height="132" Background="Transparent" Panel.ZIndex="1" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
                                                     <Rectangle x:Name="TimelineTrackRectangle" RadiusX="5" RadiusY="5" Height="10" Fill="{StaticResource PanelAltBrush}" />
                                                     <Rectangle x:Name="TrimSelectionRectangle" RadiusX="6" RadiusY="6" Height="10" Fill="{StaticResource AccentMutedBrush}" />
                                                 </Canvas>
-                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="110" Background="Transparent" Panel.ZIndex="2" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown" />
-                                                <Canvas x:Name="TimelineOverlayCanvas" Height="110" Background="Transparent" Panel.ZIndex="3" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
-                                                    <Rectangle x:Name="TimelineDropIndicator" Width="3" Height="92" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" Visibility="Collapsed" Panel.ZIndex="0" />
+                                                <Canvas x:Name="TimelineSegmentsCanvas" Height="132" Background="Transparent" Panel.ZIndex="2" IsHitTestVisible="True" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown" />
+                                                <Canvas x:Name="TimelineOverlayCanvas" Height="132" Background="Transparent" Panel.ZIndex="3" SizeChanged="TimelineCanvas_SizeChanged" MouseLeftButtonDown="TimelineCanvas_MouseLeftButtonDown">
+                                                    <Rectangle x:Name="TimelineDropIndicator" Width="3" Height="104" RadiusX="1.5" RadiusY="1.5" Fill="{StaticResource AccentBrush}" Visibility="Collapsed" Panel.ZIndex="0" />
                                                     <Rectangle x:Name="PlayheadLine" Width="2" Height="70" Fill="{StaticResource AccentBrush}" Panel.ZIndex="1" />
                                                     <Thumb x:Name="TrimStartThumb"
                                                            Style="{StaticResource EditorHandleThumbStyle}"
+                                                           DragStarted="EditorMutationThumb_DragStarted"
                                                            DragDelta="TrimStartThumb_DragDelta"
+                                                           DragCompleted="TrimThumb_DragCompleted"
                                                            Visibility="Collapsed"
-                                                           IsHitTestVisible="False"
                                                            Panel.ZIndex="1" />
                                                     <Thumb x:Name="TrimEndThumb"
                                                            Style="{StaticResource EditorHandleThumbStyle}"
+                                                           DragStarted="EditorMutationThumb_DragStarted"
                                                            DragDelta="TrimEndThumb_DragDelta"
+                                                           DragCompleted="TrimThumb_DragCompleted"
                                                            Visibility="Collapsed"
-                                                           IsHitTestVisible="False"
                                                            Panel.ZIndex="1" />
                                                     <Thumb x:Name="PlayheadThumb" Style="{StaticResource PlayheadThumbStyle}" DragDelta="PlayheadThumb_DragDelta" Panel.ZIndex="2" />
                                                 </Canvas>
@@ -2175,7 +2552,7 @@
                                         </Grid>
                                     </ScrollViewer>
 
-                                    <WrapPanel Grid.Row="3" Margin="12,-6,12,12">
+                                    <WrapPanel Grid.Row="3" Margin="12,-14,12,12">
                                         <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Style="{StaticResource EditorSnapToggleStyle}" IsChecked="{Binding Editor.IsSnappingEnabled}" Content="Snap" />
                                         <StackPanel Margin="0,0,8,0">
                                             <Button x:Name="SplitSegmentButton" MinWidth="86" Style="{StaticResource GhostButtonStyle}" Click="SplitSegmentButton_Click" Content="Split" />
@@ -2211,9 +2588,80 @@
                 </Grid>
             </ScrollViewer>
 
+            </Grid>
+
+            <Grid Grid.RowSpan="2"
+                  Panel.ZIndex="24"
+                  Background="#11233B">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsStartupOverlayVisible}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <Border Width="108"
+                            Height="108"
+                            Padding="18"
+                            Background="#1D3A5A"
+                            BorderBrush="#415E80"
+                            BorderThickness="1"
+                            CornerRadius="28"
+                            HorizontalAlignment="Center">
+                        <Image Source="Assets/DualClipLogo.png"
+                               Stretch="Uniform" />
+                    </Border>
+
+                    <TextBlock Margin="0,20,0,0"
+                               HorizontalAlignment="Center"
+                               FontSize="28"
+                               FontWeight="SemiBold"
+                               Text="DualClip" />
+
+                    <Grid Width="82"
+                          Height="82"
+                          Margin="0,22,0,0"
+                          RenderTransformOrigin="0.5,0.5">
+                        <Grid.RenderTransform>
+                            <RotateTransform />
+                        </Grid.RenderTransform>
+                        <Grid.Triggers>
+                            <EventTrigger RoutedEvent="Loaded">
+                                <BeginStoryboard>
+                                    <Storyboard RepeatBehavior="Forever">
+                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                         From="0"
+                                                         To="360"
+                                                         Duration="0:0:1.05" />
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </EventTrigger>
+                        </Grid.Triggers>
+                        <Ellipse Width="66"
+                                 Height="66"
+                                 Stroke="#315678"
+                                 StrokeThickness="6" />
+                        <Path Width="66"
+                              Height="66"
+                              Data="M 33,5 A 28,28 0 1 1 11,50"
+                              Stretch="Fill"
+                              Stroke="#EAF4FF"
+                              StrokeThickness="6"
+                              StrokeStartLineCap="Round"
+                              StrokeEndLineCap="Round" />
+                    </Grid>
+                </StackPanel>
+            </Grid>
+
             <Grid Grid.RowSpan="2"
                   Panel.ZIndex="20"
-                  Background="#B80A0F14"
+                  Background="#8C091019"
                   IsHitTestVisible="True">
                 <Grid.Style>
                     <Style TargetType="Grid">
@@ -2227,18 +2675,26 @@
                 </Grid.Style>
 
                 <Border Margin="28"
-                        Padding="34,28"
+                        Padding="36,32,36,30"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
-                        Background="#D0151B22"
-                        BorderBrush="#66FFFFFF"
+                        Background="#EE141B22"
+                        BorderBrush="#3FFFFFFF"
                         BorderThickness="1"
-                        CornerRadius="18"
-                        MaxWidth="420">
+                        CornerRadius="24"
+                        MaxWidth="440">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="28"
+                                          Direction="270"
+                                          Opacity="0.35"
+                                          ShadowDepth="10"
+                                          Color="#FF000000" />
+                    </Border.Effect>
                     <StackPanel HorizontalAlignment="Center">
-                        <Grid Width="64"
-                              Height="64"
-                              Margin="0,0,0,18"
+                        <Grid Width="84"
+                              Height="84"
+                              Margin="0,0,0,22"
+                              RenderTransformOrigin="0.5,0.5"
                               Style="{StaticResource UpdateOverlaySpinnerPanelStyle}">
                             <Grid.RenderTransform>
                                 <RotateTransform />
@@ -2255,25 +2711,67 @@
                                     </BeginStoryboard>
                                 </EventTrigger>
                             </Grid.Triggers>
-                            <Ellipse Stroke="#33FFFFFF"
-                                     StrokeThickness="4" />
-                            <Ellipse Stroke="White"
-                                     StrokeThickness="4"
-                                     StrokeDashArray="2.4 6.2"
-                                     StrokeDashCap="Round" />
+                            <Ellipse Width="72"
+                                     Height="72"
+                                     Stroke="#22FFFFFF"
+                                     StrokeThickness="6" />
+                            <Path Width="72"
+                                  Height="72"
+                                  Data="M 36,6 A 30,30 0 1 1 12,54"
+                                  Stretch="Fill"
+                                  Stroke="#FFDDEBFF"
+                                  StrokeThickness="6"
+                                  StrokeStartLineCap="Round"
+                                  StrokeEndLineCap="Round" />
+                            <Border Width="34"
+                                    Height="34"
+                                    Background="#18263B"
+                                    BorderBrush="#3AFFFFFF"
+                                    BorderThickness="1"
+                                    CornerRadius="17">
+                                <Viewbox Width="14"
+                                         Height="14"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center">
+                                    <Path Fill="White"
+                                          Stretch="Fill"
+                                          Data="M 10 0 L 10 11 L 14 7 L 16 9 L 8 17 L 0 9 L 2 7 L 6 11 L 6 0 Z M 0 19 H 16 V 21 H 0 Z" />
+                                </Viewbox>
+                            </Border>
                         </Grid>
 
                         <TextBlock HorizontalAlignment="Center"
                                    FontSize="28"
                                    FontWeight="SemiBold"
                                    Foreground="White"
+                                   MaxWidth="320"
                                    Text="{Binding UpdateOverlayText}"
                                    TextAlignment="Center"
                                    TextWrapping="Wrap" />
 
                         <TextBlock Margin="0,12,0,0"
                                    HorizontalAlignment="Center"
+                                   Foreground="#C8E8F3FF"
+                                   MaxWidth="320"
+                                   Text="DualClip will finish the download, apply the update, and relaunch automatically."
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanShowUpdateOverlaySpinner}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+
+                        <TextBlock Margin="0,12,0,0"
+                                   HorizontalAlignment="Center"
                                    Foreground="#CCFFFFFF"
+                                   MaxWidth="320"
                                    Text="A new DualClip version is ready when you are."
                                    TextAlignment="Center"
                                    TextWrapping="Wrap">

@@ -17,11 +17,12 @@ public partial class MainWindow
     private const double TimelineSnapThresholdPixels = 16d;
     private const double TimelineDragActivationPixels = 4d;
     private const double PreviewMoveDeadzonePixels = 1d;
-    private const double TimelineSegmentTopPixels = 8d;
+    private const double TimelineSegmentTopPixels = 18d;
     private const double TimelineSegmentHeightPixels = 42d;
-    private const double TimelineTrackTopPixels = 76d;
-    private const double TimelinePlayheadTopPixels = 12d;
-    private const double TimelineTrimThumbTopPixels = 64d;
+    private const double TimelineTrackTopPixels = 82d;
+    private const double TimelinePlayheadTopPixels = 2d;
+    private const double TimelineTrimThumbTopPixels = 27d;
+    private const double TimelineDefaultPixelsPerSecond = 100d;
 
     private TimelineSegment? _copiedSegmentSettings;
     private TimelineSegment? _draggingTimelineSegment;
@@ -34,14 +35,33 @@ public partial class MainWindow
 
     private double GetTimelinePixelsPerSecond()
     {
-        return 100d;
+        var timelineDuration = GetTimelineDisplayDurationSeconds();
+        if (timelineDuration <= 0)
+        {
+            return TimelineDefaultPixelsPerSecond;
+        }
+
+        var availableWidth = Math.Max(240d, GetTimelineViewportWidth() - TimelineLeftPaddingPixels - TimelineRightPaddingPixels);
+        return Math.Min(TimelineDefaultPixelsPerSecond, availableWidth / timelineDuration);
     }
 
     private double GetTimelineCanvasWidth()
     {
-        var viewportWidth = TimelineScrollViewer?.ViewportWidth ?? 0;
-        var contentWidth = TimelineLeftPaddingPixels + TimelineRightPaddingPixels + (GetTimelineDurationSeconds() * GetTimelinePixelsPerSecond());
+        var viewportWidth = GetTimelineViewportWidth();
+        var contentWidth = TimelineLeftPaddingPixels + TimelineRightPaddingPixels + (GetTimelineDisplayDurationSeconds() * GetTimelinePixelsPerSecond());
         return Math.Max(Math.Max(420d, viewportWidth), contentWidth);
+    }
+
+    private double GetTimelineViewportWidth()
+    {
+        var viewportWidth = TimelineScrollViewer?.ViewportWidth ?? 0;
+        if (viewportWidth > 0)
+        {
+            return viewportWidth;
+        }
+
+        var actualWidth = TimelineScrollViewer?.ActualWidth ?? 0;
+        return actualWidth > 0 ? actualWidth : 420d;
     }
 
     private double GetTimelineSnapThresholdSeconds()
@@ -85,7 +105,7 @@ public partial class MainWindow
         {
             0,
             _playheadSeconds,
-            GetTimelineDurationSeconds(),
+            GetTimelineDisplayDurationSeconds(),
         };
 
         foreach (var segment in _timelineSegments)
@@ -162,11 +182,12 @@ public partial class MainWindow
 
     private void UpdateEditorToolButtons()
     {
-        if (ToolCropButton is null || ToolTransformButton is null)
+        if (ToolSelectButton is null || ToolCropButton is null || ToolTransformButton is null)
         {
             return;
         }
 
+        ToolSelectButton.IsChecked = _viewModel.Editor.IsSelectToolActive;
         ToolCropButton.IsChecked = _viewModel.Editor.IsCropToolActive;
         ToolTransformButton.IsChecked = _viewModel.Editor.IsTransformToolActive;
     }
@@ -188,6 +209,7 @@ public partial class MainWindow
 
         SetActiveTool(tag switch
         {
+            "select" => EditorToolMode.Select,
             "crop" => EditorToolMode.Crop,
             _ => EditorToolMode.Transform,
         });
@@ -199,6 +221,16 @@ public partial class MainWindow
         {
             RenderTimelineRuler();
         }
+    }
+
+    private void TimelineScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (Math.Abs(e.PreviousSize.Width - e.NewSize.Width) < double.Epsilon)
+        {
+            return;
+        }
+
+        UpdateTimelineVisuals();
     }
 
     private void RenderTimelineRuler()
@@ -214,7 +246,7 @@ public partial class MainWindow
         TimelineRulerCanvas.Width = timelineWidth;
         TimelineRulerCanvas.Height = 28;
 
-        if (GetTimelineDurationSeconds() <= 0)
+        if (GetTimelineDisplayDurationSeconds() <= 0)
         {
             return;
         }
@@ -224,7 +256,7 @@ public partial class MainWindow
         var rulerBrush = TryFindResource("BorderBrushDark") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Gray;
         var textBrush = TryFindResource("MutedTextBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.LightGray;
         var accentBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Goldenrod;
-        var maxSeconds = GetTimelineDurationSeconds();
+        var maxSeconds = GetTimelineDisplayDurationSeconds();
 
         var startTick = new System.Windows.Shapes.Rectangle
         {
@@ -238,18 +270,6 @@ public partial class MainWindow
         Canvas.SetLeft(startTick, TimeToTimelineX(0) - (startTick.Width / 2d));
         Canvas.SetTop(startTick, 8);
         TimelineRulerCanvas.Children.Add(startTick);
-
-        var startLabel = new TextBlock
-        {
-            Text = "Start",
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = accentBrush,
-        };
-
-        Canvas.SetLeft(startLabel, TimeToTimelineX(0) + 6);
-        Canvas.SetTop(startLabel, 0);
-        TimelineRulerCanvas.Children.Add(startLabel);
 
         for (var seconds = 0d; seconds <= maxSeconds + 0.001d; seconds += interval)
         {
@@ -285,8 +305,8 @@ public partial class MainWindow
 
     private static double GetTimelineMarkerInterval(double pixelsPerSecond)
     {
-        var candidates = new[] { 0.25d, 0.5d, 1d, 2d, 5d, 10d, 15d, 30d, 60d };
-        return candidates.FirstOrDefault(candidate => candidate * pixelsPerSecond >= 72d, 60d);
+        var candidates = new[] { 0.25d, 0.5d, 1d, 2d, 5d, 10d, 15d, 30d, 60d, 120d, 300d, 600d, 900d, 1800d, 3600d };
+        return candidates.FirstOrDefault(candidate => candidate * pixelsPerSecond >= 72d, 3600d);
     }
 
     private static string FormatTimelineTime(double seconds)
@@ -486,6 +506,7 @@ public partial class MainWindow
         ApplyCurrentEditorStateToSelectedSegment();
 
         var duplicate = _selectedTimelineSegment.DuplicateForTimeline();
+        _useSourceTimelineForSingleSegment = false;
         _timelineSegments.Insert(index + 1, duplicate);
         NormalizeTimelineSegmentPositions();
         SelectTimelineSegment(duplicate, movePlayheadToSegmentStart: true);
@@ -663,7 +684,7 @@ public partial class MainWindow
 
     private void TransformMoveThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
-        if (!TryGetPreviewSourceDelta(e.HorizontalChange, e.VerticalChange, out var deltaX, out var deltaY))
+        if (!TryGetPreviewSourceDelta(sender as FrameworkElement, e.HorizontalChange, e.VerticalChange, out var deltaX, out var deltaY))
         {
             return;
         }

@@ -4,17 +4,47 @@ namespace DualClip.App;
 
 public sealed class ClipLibraryItem : BindableObject
 {
+    private string _displayName = string.Empty;
+    private DateTime _modifiedAt;
+    private long _fileSizeBytes;
     private string _editableFileName = string.Empty;
     private bool _isRenaming;
+    private bool _isProcessing;
     private string _thumbnailPath = string.Empty;
 
     public required string FilePath { get; init; }
 
-    public required string DisplayName { get; init; }
+    public string DisplayName
+    {
+        get => _displayName;
+        private set => SetProperty(ref _displayName, value);
+    }
 
-    public required DateTime ModifiedAt { get; init; }
+    public DateTime ModifiedAt
+    {
+        get => _modifiedAt;
+        private set
+        {
+            if (SetProperty(ref _modifiedAt, value))
+            {
+                RaisePropertyChanged(nameof(ModifiedDisplay));
+                RaisePropertyChanged(nameof(MetadataText));
+            }
+        }
+    }
 
-    public required long FileSizeBytes { get; init; }
+    public long FileSizeBytes
+    {
+        get => _fileSizeBytes;
+        private set
+        {
+            if (SetProperty(ref _fileSizeBytes, value))
+            {
+                RaisePropertyChanged(nameof(FileSizeDisplay));
+                RaisePropertyChanged(nameof(MetadataText));
+            }
+        }
+    }
 
     public string FileName => Path.GetFileName(FilePath);
 
@@ -38,6 +68,12 @@ public sealed class ClipLibraryItem : BindableObject
     {
         get => _isRenaming;
         private set => SetProperty(ref _isRenaming, value);
+    }
+
+    public bool IsProcessing
+    {
+        get => _isProcessing;
+        set => SetProperty(ref _isProcessing, value);
     }
 
     public string ThumbnailPath
@@ -74,6 +110,18 @@ public sealed class ClipLibraryItem : BindableObject
     public void EndRename()
     {
         IsRenaming = false;
+    }
+
+    public void UpdateFileDetails(string displayName, DateTime modifiedAt, long fileSizeBytes)
+    {
+        DisplayName = displayName;
+        ModifiedAt = modifiedAt;
+        FileSizeBytes = fileSizeBytes;
+
+        if (!IsRenaming)
+        {
+            EditableFileName = FileNameWithoutExtension;
+        }
     }
 
     private static string FormatFileSize(long bytes)

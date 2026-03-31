@@ -36,6 +36,7 @@ public sealed class MainWindowViewModel : BindableObject
     private bool _isCheckingForUpdates;
     private bool _isUpdateAvailable;
     private bool _isPackagedApp;
+    private bool _isStartupOverlayVisible = true;
     private bool _isUpdateOverlayVisible;
     private bool _isUpdateOverlayBusy;
 
@@ -202,6 +203,12 @@ public sealed class MainWindowViewModel : BindableObject
                 RaisePropertyChanged(nameof(CanShowUpdateOverlaySpinner));
             }
         }
+    }
+
+    public bool IsStartupOverlayVisible
+    {
+        get => _isStartupOverlayVisible;
+        set => SetProperty(ref _isStartupOverlayVisible, value);
     }
 
     public bool IsUpdateOverlayBusy

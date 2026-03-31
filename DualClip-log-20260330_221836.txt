@@ -1,0 +1,268 @@
+﻿=== DualClip Session Log ===
+created_local: 2026-03-30 22:17:33.464 -04:00
+machine_name: RYLOGIX-PC
+os_version: Microsoft Windows NT 10.0.26200.0
+process_architecture: X64
+dotnet_version: 8.0.25
+app_version: 0.9.0.0
+is_packaged: False
+base_directory: C:\Users\rylan\Downloads\RLXProjects\DualClip\publish\DualClip.SingleFile\
+
+Log format:
+- Each entry includes timestamp, level, scope, message, and structured detail.* lines.
+- Use this log as the main debugging artifact for runtime, capture, editor, and packaging issues.
+---
+[2026-03-30 22:17:33.500 -04:00] level=INFO scope=Startup
+message: App.OnStartup entered.
+---
+[2026-03-30 22:17:33.503 -04:00] level=INFO scope=Startup
+message: App.OnStartup after base.
+---
+[2026-03-30 22:17:33.504 -04:00] level=INFO scope=Startup
+message: Single-instance mutex acquired.
+---
+[2026-03-30 22:17:33.507 -04:00] level=INFO scope=Startup
+message: Creating MainWindow.
+---
+[2026-03-30 22:17:33.886 -04:00] level=INFO scope=Startup
+message: MainWindow ctor entered.
+---
+[2026-03-30 22:17:34.558 -04:00] level=INFO scope=Startup
+message: MainWindow InitializeComponent completed.
+---
+[2026-03-30 22:17:34.566 -04:00] level=INFO scope=Startup
+message: MainWindow preview media element created.
+---
+[2026-03-30 22:17:34.569 -04:00] level=INFO scope=Startup
+message: MainWindow creating notify icon.
+---
+[2026-03-30 22:17:34.736 -04:00] level=INFO scope=Startup
+message: MainWindow notify icon created.
+---
+[2026-03-30 22:17:34.743 -04:00] level=INFO scope=Startup
+message: MainWindow ctor completed.
+---
+[2026-03-30 22:17:34.745 -04:00] level=INFO scope=Startup
+message: MainWindow constructed.
+---
+[2026-03-30 22:17:35.316 -04:00] level=INFO scope=Startup
+message: Window_Loaded entered.
+---
+[2026-03-30 22:17:35.317 -04:00] level=INFO scope=MainWindow
+message: Window loaded.
+detail.startup_overlay_visible: True
+---
+[2026-03-30 22:17:35.319 -04:00] level=INFO scope=Startup
+message: LoadStateAsync entered.
+---
+[2026-03-30 22:17:35.771 -04:00] level=INFO scope=Startup
+message: MainWindow shown.
+---
+[2026-03-30 22:17:35.869 -04:00] level=INFO scope=Startup
+message: LoadStateAsync loaded config. StartCaptureOnStartup=True, LaunchOnStartup=False.
+---
+[2026-03-30 22:17:35.877 -04:00] level=INFO scope=Startup
+message: LoadStateAsync enumerated 2 monitor(s).
+---
+[2026-03-30 22:17:37.334 -04:00] level=INFO scope=Startup
+message: LoadStateAsync enumerated 9 microphone(s).
+---
+[2026-03-30 22:17:37.487 -04:00] level=INFO scope=Startup
+message: LoadStateAsync checking for updates.
+---
+[2026-03-30 22:17:38.022 -04:00] level=INFO scope=Startup
+message: LoadStateAsync finished update check.
+---
+[2026-03-30 22:17:38.023 -04:00] level=INFO scope=Startup
+message: LoadStateAsync auto-start capture beginning.
+---
+[2026-03-30 22:17:38.027 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync entered.
+---
+[2026-03-30 22:17:38.029 -04:00] level=INFO scope=Capture
+message: Start all capture requested.
+---
+[2026-03-30 22:17:38.055 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync borderless access result: False.
+---
+[2026-03-30 22:17:38.060 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync validated config.
+---
+[2026-03-30 22:17:38.082 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync saved config.
+---
+[2026-03-30 22:17:38.135 -04:00] level=INFO scope=AudioSession
+message: Audio session status updated.
+detail.status: Audio capture running: System audio.
+---
+[2026-03-30 22:17:38.136 -04:00] level=INFO scope=Startup
+message: EnsureSharedAudioSessionsAsync audio session started.
+---
+[2026-03-30 22:17:38.370 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 1
+detail.status: Starting capture on Primary \\.\DISPLAY1 (1920x1080 @ 0,0)...
+---
+[2026-03-30 22:17:38.776 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 1
+detail.status: Capturing Primary \\.\DISPLAY1 (1920x1080 @ 0,0) at 60 FPS (max 1080p).
+---
+[2026-03-30 22:17:38.778 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync monitor session started for Monitor 1.
+---
+[2026-03-30 22:17:38.871 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 2
+detail.status: Starting capture on Monitor \\.\DISPLAY2 (1639x922 @ -1639,0)...
+---
+[2026-03-30 22:17:39.211 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 2
+detail.status: Capturing Monitor \\.\DISPLAY2 (1639x922 @ -1639,0) at 60 FPS (max 1080p).
+---
+[2026-03-30 22:17:39.212 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync monitor session started for Monitor 2.
+---
+[2026-03-30 22:17:39.226 -04:00] level=INFO scope=Capture
+message: Start all capture completed.
+detail.active_monitor_count: 2
+---
+[2026-03-30 22:17:39.227 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync completed successfully.
+---
+[2026-03-30 22:17:39.228 -04:00] level=INFO scope=Startup
+message: LoadStateAsync auto-start capture completed. IsCapturing=True.
+---
+[2026-03-30 22:17:39.232 -04:00] level=INFO scope=MainWindow
+message: Startup overlay dismissed.
+---
+[2026-03-30 22:17:39.234 -04:00] level=INFO scope=Startup
+message: Window_Loaded completed.
+---
+[2026-03-30 22:17:42.358 -04:00] level=INFO scope=Capture
+message: Stop all capture requested.
+detail.active_monitor_count: 2
+---
+[2026-03-30 22:17:42.533 -04:00] level=INFO scope=Capture
+message: Stop all capture completed.
+---
+[2026-03-30 22:17:43.225 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync entered.
+---
+[2026-03-30 22:17:43.227 -04:00] level=INFO scope=Capture
+message: Start all capture requested.
+---
+[2026-03-30 22:17:43.227 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync borderless access result: False.
+---
+[2026-03-30 22:17:43.229 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync validated config.
+---
+[2026-03-30 22:17:43.233 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync saved config.
+---
+[2026-03-30 22:17:43.257 -04:00] level=INFO scope=AudioSession
+message: Audio session status updated.
+detail.status: Audio capture running: System audio.
+---
+[2026-03-30 22:17:43.258 -04:00] level=INFO scope=Startup
+message: EnsureSharedAudioSessionsAsync audio session started.
+---
+[2026-03-30 22:17:43.344 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 1
+detail.status: Starting capture on Primary \\.\DISPLAY1 (1920x1080 @ 0,0)...
+---
+[2026-03-30 22:17:43.682 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 1
+detail.status: Capturing Primary \\.\DISPLAY1 (1920x1080 @ 0,0) at 60 FPS (max 1080p).
+---
+[2026-03-30 22:17:43.683 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync monitor session started for Monitor 1.
+---
+[2026-03-30 22:17:43.776 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 2
+detail.status: Starting capture on Monitor \\.\DISPLAY2 (1639x922 @ -1639,0)...
+---
+[2026-03-30 22:17:44.117 -04:00] level=INFO scope=CaptureSession
+message: Monitor session status updated.
+detail.monitor_node: Monitor 2
+detail.status: Capturing Monitor \\.\DISPLAY2 (1639x922 @ -1639,0) at 60 FPS (max 1080p).
+---
+[2026-03-30 22:17:44.118 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync monitor session started for Monitor 2.
+---
+[2026-03-30 22:17:44.122 -04:00] level=INFO scope=Capture
+message: Start all capture completed.
+detail.active_monitor_count: 2
+---
+[2026-03-30 22:17:44.123 -04:00] level=INFO scope=Startup
+message: StartCaptureAsync completed successfully.
+---
+[2026-03-30 22:17:44.718 -04:00] level=INFO scope=Capture
+message: Stop all capture requested.
+detail.active_monitor_count: 2
+---
+[2026-03-30 22:17:44.886 -04:00] level=INFO scope=Capture
+message: Stop all capture completed.
+---
+[2026-03-30 22:17:48.779 -04:00] level=INFO scope=Logs
+message: Opening log viewer window.
+---
+[2026-03-30 22:17:58.092 -04:00] level=INFO scope=Editor
+message: Clip library selection changed.
+detail.selected_clip: C:\Users\rylan\Videos\DualClip\Monitor2\DualClip_Monitor_2_20260330_172127.mp4
+---
+[2026-03-30 22:17:58.097 -04:00] level=INFO scope=Editor
+message: Loading selected clip into preview.
+detail.clip_path: C:\Users\rylan\Videos\DualClip\Monitor2\DualClip_Monitor_2_20260330_172127.mp4
+---
+[2026-03-30 22:17:58.587 -04:00] level=INFO scope=Editor
+message: Preview media opened.
+detail.clip_title: DualClip_Monitor_2_20260330_172127.mp4
+detail.duration_seconds: 15
+detail.width: 1366
+detail.height: 768
+---
+[2026-03-30 22:17:59.496 -04:00] level=INFO scope=Editor
+message: Clip library selection changed.
+detail.selected_clip: C:\Users\rylan\Videos\DualClip\Monitor1\DualClip_Monitor_1_20260330_172930.mp4
+---
+[2026-03-30 22:17:59.500 -04:00] level=INFO scope=Editor
+message: Loading selected clip into preview.
+detail.clip_path: C:\Users\rylan\Videos\DualClip\Monitor1\DualClip_Monitor_1_20260330_172930.mp4
+---
+[2026-03-30 22:17:59.738 -04:00] level=INFO scope=Editor
+message: Preview media opened.
+detail.clip_title: DualClip_Monitor_1_20260330_172930.mp4
+detail.duration_seconds: 15
+detail.width: 1920
+detail.height: 1080
+---
+[2026-03-30 22:18:00.050 -04:00] level=INFO scope=Editor
+message: Starting preview playback.
+detail.clip_path: C:\Users\rylan\Videos\DualClip\Monitor1\DualClip_Monitor_1_20260330_172930.mp4
+detail.playhead_seconds: 0
+detail.segment_start_seconds: 0
+detail.segment_end_seconds: 15
+---
+[2026-03-30 22:18:04.365 -04:00] level=INFO scope=Editor
+message: Starting preview playback.
+detail.clip_path: C:\Users\rylan\Videos\DualClip\Monitor1\DualClip_Monitor_1_20260330_172930.mp4
+detail.playhead_seconds: 0
+detail.segment_start_seconds: 7.270306258322237
+detail.segment_end_seconds: 15
+---
+[2026-03-30 22:18:07.409 -04:00] level=INFO scope=Editor
+message: Starting preview playback.
+detail.clip_path: C:\Users\rylan\Videos\DualClip\Monitor1\DualClip_Monitor_1_20260330_172930.mp4
+detail.playhead_seconds: 0.37506194167776297
+detail.segment_start_seconds: 7.270306258322237
+detail.segment_end_seconds: 15
+---
+[2026-03-30 22:18:23.025 -04:00] level=INFO scope=Logs
+message: Opening log viewer window.
+---

@@ -135,6 +135,7 @@ public partial class MainWindow
             PlayheadSeconds = _playheadSeconds,
             SelectedSegmentId = _selectedTimelineSegment?.Id,
             CopiedSegment = _copiedTimelineSegment?.CloneForSnapshot(),
+            UseSourceTimelineForSingleSegment = _useSourceTimelineForSingleSegment,
             Segments = _timelineSegments.Select(segment => segment.CloneForSnapshot()).ToList(),
         });
 
@@ -192,6 +193,7 @@ public partial class MainWindow
                 _timelineSegments.Add(segment.CloneForSnapshot());
             }
 
+            _useSourceTimelineForSingleSegment = snapshot.UseSourceTimelineForSingleSegment;
             NormalizeTimelineSegmentPositions();
 
             _copiedTimelineSegment = snapshot.CopiedSegment?.CloneForSnapshot();
@@ -287,6 +289,8 @@ public partial class MainWindow
         public required Guid? SelectedSegmentId { get; init; }
 
         public required TimelineSegment? CopiedSegment { get; init; }
+
+        public required bool UseSourceTimelineForSingleSegment { get; init; }
 
         public required List<TimelineSegment> Segments { get; init; }
     }

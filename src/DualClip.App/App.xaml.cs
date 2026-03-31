@@ -12,6 +12,10 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        AppLog.StartSession();
+        DispatcherUnhandledException += App_DispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+        TaskScheduler.UnobservedTaskException += TaskScheduler_UnobservedTaskException;
         StartupDiagnostics.Write("App.OnStartup entered.");
         base.OnStartup(e);
         StartupDiagnostics.Write("App.OnStartup after base.");
@@ -69,6 +73,9 @@ public partial class App : System.Windows.Application
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
         StartupDiagnostics.Write("App.OnExit entered.");
+        DispatcherUnhandledException -= App_DispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
+        TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
         _restoreWindowRegistration?.Unregister(null);
         _restoreWindowRegistration = null;
 
@@ -108,5 +115,24 @@ public partial class App : System.Windows.Application
                 Thread.Sleep(100);
             }
         }
+    }
+
+    private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
+    {
+        AppLog.Error("App", "Dispatcher unhandled exception.", e.Exception);
+    }
+
+    private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        AppLog.Error(
+            "App",
+            "AppDomain unhandled exception.",
+            e.ExceptionObject as Exception,
+            ("is_terminating", e.IsTerminating));
+    }
+
+    private void TaskScheduler_UnobservedTaskException(object? sender, UnobservedTaskExceptionEventArgs e)
+    {
+        AppLog.Error("App", "Unobserved task exception.", e.Exception);
     }
 }

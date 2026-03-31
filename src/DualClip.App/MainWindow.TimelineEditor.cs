@@ -12,6 +12,56 @@ public partial class MainWindow
     private TimelineSegment? _selectedTimelineSegment;
     private TimelineSegment? _copiedTimelineSegment;
     private bool _isTimelinePlaybackActive;
+    private bool _useSourceTimelineForSingleSegment = true;
+
+    private bool UsesSingleSegmentSourceTimeline()
+    {
+        return _useSourceTimelineForSingleSegment
+            && _timelineSegments.Count == 1
+            && _selectedClipDurationSeconds > 0;
+    }
+
+    private double GetTimelineDisplayDurationSeconds()
+    {
+        return UsesSingleSegmentSourceTimeline()
+            ? _selectedClipDurationSeconds
+            : GetTimelineDurationSeconds();
+    }
+
+    private double GetTimelinePlayableMinimumSeconds()
+    {
+        return UsesSingleSegmentSourceTimeline() && _selectedTimelineSegment is not null
+            ? _selectedTimelineSegment.SourceStartSeconds
+            : 0d;
+    }
+
+    private double GetTimelinePlayableMaximumSeconds()
+    {
+        return UsesSingleSegmentSourceTimeline() && _selectedTimelineSegment is not null
+            ? _selectedTimelineSegment.SourceEndSeconds
+            : GetTimelineDisplayDurationSeconds();
+    }
+
+    private double ClampTimelinePlayhead(double playheadSeconds)
+    {
+        var minTime = GetTimelinePlayableMinimumSeconds();
+        var maxTime = GetTimelinePlayableMaximumSeconds();
+
+        if (maxTime < minTime)
+        {
+            maxTime = minTime;
+        }
+
+        return Math.Clamp(playheadSeconds, minTime, maxTime);
+    }
+
+    private double SnapSourceClipTime(double proposedSeconds, params double[] candidates)
+    {
+        return Math.Clamp(
+            SnapTimelineTimeValue(proposedSeconds, candidates),
+            0,
+            Math.Max(0, _selectedClipDurationSeconds));
+    }
 
     private void InitializeTimelineForLoadedClip()
     {
@@ -19,6 +69,7 @@ public partial class MainWindow
         _timelineSegments.Clear();
         _copiedTimelineSegment = null;
         _selectedTimelineSegment = null;
+        _useSourceTimelineForSingleSegment = true;
 
         if (_selectedClipDurationSeconds <= 0 || _selectedClipWidth <= 0 || _selectedClipHeight <= 0)
         {
@@ -52,6 +103,7 @@ public partial class MainWindow
         _selectedTimelineSegment = null;
         _copiedTimelineSegment = null;
         _isTimelinePlaybackActive = false;
+        _useSourceTimelineForSingleSegment = true;
         TimelineSegmentsCanvas.Children.Clear();
     }
 
@@ -161,6 +213,11 @@ public partial class MainWindow
 
     private double GetSegmentTimelineStartSeconds(TimelineSegment segment)
     {
+        if (UsesSingleSegmentSourceTimeline() && _timelineSegments.Count == 1)
+        {
+            return segment.SourceStartSeconds;
+        }
+
         return segment.TimelineStartSeconds;
     }
 
@@ -190,6 +247,15 @@ public partial class MainWindow
         if (_timelineSegments.Count == 0)
         {
             return false;
+        }
+
+        if (UsesSingleSegmentSourceTimeline())
+        {
+            var singleSegment = _timelineSegments[0];
+            segment = singleSegment;
+            segmentTimelineStart = singleSegment.SourceStartSeconds;
+            localOffsetSeconds = Math.Clamp(timeSeconds - singleSegment.SourceStartSeconds, 0, singleSegment.DurationSeconds);
+            return true;
         }
 
         double currentStart = 0;
@@ -252,7 +318,9 @@ public partial class MainWindow
                 : start;
             var left = TimeToTimelineX(displayStart);
             var right = TimeToTimelineX(displayStart + segment.DurationSeconds);
-            var width = Math.Max(64, right - left);
+            var width = UsesSingleSegmentSourceTimeline()
+                ? Math.Max(1d, right - left)
+                : Math.Max(64d, right - left);
             var segmentTitle = string.IsNullOrWhiteSpace(segment.SourceClipPath)
                 ? $"Clip {index + 1}"
                 : System.IO.Path.GetFileNameWithoutExtension(segment.SourceClipPath);
@@ -275,9 +343,14 @@ public partial class MainWindow
             var stack = new StackPanel
             {
                 Margin = new Thickness(8, 4, 8, 4),
+                Visibility = width >= 36d ? Visibility.Visible : Visibility.Collapsed,
             };
             stack.Children.Add(title);
-            stack.Children.Add(subtitle);
+
+            if (width >= 92d)
+            {
+                stack.Children.Add(subtitle);
+            }
 
             var border = new Border
             {
@@ -288,7 +361,9 @@ public partial class MainWindow
                 BorderThickness = ReferenceEquals(segment, _selectedTimelineSegment) ? new Thickness(1.5) : new Thickness(1),
                 Background = ReferenceEquals(segment, _selectedTimelineSegment) ? accentSurfaceBrush : panelBrush,
                 Child = stack,
-                Cursor = System.Windows.Input.Cursors.SizeAll,
+                Cursor = UsesSingleSegmentSourceTimeline()
+                    ? System.Windows.Input.Cursors.Arrow
+                    : System.Windows.Input.Cursors.SizeAll,
                 Tag = segment,
                 Opacity = _isTimelineSegmentDragging && ReferenceEquals(segment, _draggingTimelineSegment) ? 0.94d : 1d,
             };
@@ -338,7 +413,13 @@ public partial class MainWindow
         }
 
         SelectTimelineSegment(segment);
-        MovePlayheadToTimelineX(e.GetPosition(TimelineCanvas).X);
+
+        if (UsesSingleSegmentSourceTimeline())
+        {
+            e.Handled = true;
+            return;
+        }
+
         _draggingTimelineSegment = segment;
         _timelineSegmentDragStartPoint = e.GetPosition(TimelineSegmentsCanvas);
         _timelineSegmentDragOriginStartSeconds = segment.TimelineStartSeconds;
@@ -569,6 +650,7 @@ public partial class MainWindow
         _selectedTimelineSegment.ZoomKeyframe2OffsetSeconds = Math.Clamp(_selectedTimelineSegment.ZoomKeyframe2OffsetSeconds, 0, _selectedTimelineSegment.DurationSeconds);
         LoadSelectedSegmentIntoEditorState(_selectedTimelineSegment);
 
+        _useSourceTimelineForSingleSegment = false;
         _timelineSegments.Insert(index + 1, secondSegment);
         NormalizeTimelineSegmentPositions();
         SelectTimelineSegment(secondSegment);
@@ -603,6 +685,7 @@ public partial class MainWindow
 
         var insertIndex = TryGetSelectedSegmentIndex(out var selectedIndex) ? selectedIndex + 1 : _timelineSegments.Count;
         var pasted = _copiedTimelineSegment.DuplicateForTimeline();
+        _useSourceTimelineForSingleSegment = false;
         _timelineSegments.Insert(insertIndex, pasted);
         NormalizeTimelineSegmentPositions();
         SelectTimelineSegment(pasted, movePlayheadToSegmentStart: true);
@@ -619,6 +702,12 @@ public partial class MainWindow
         CaptureTimelineUndoSnapshot();
         PausePreviewPlayback();
         _timelineSegments.RemoveAt(index);
+        _useSourceTimelineForSingleSegment = _timelineSegments.Count switch
+        {
+            0 => true,
+            1 => false,
+            _ => _useSourceTimelineForSingleSegment,
+        };
         NormalizeTimelineSegmentPositions();
 
         if (_timelineSegments.Count == 0)
@@ -628,6 +717,7 @@ public partial class MainWindow
             _isTimelineSegmentDragging = false;
             _didTimelineSegmentDragMove = false;
             _timelineSegmentDropIndex = -1;
+            StopPreview(clearSource: true);
             _playheadSeconds = 0;
             _trimStartSeconds = 0;
             _trimEndSeconds = 0;

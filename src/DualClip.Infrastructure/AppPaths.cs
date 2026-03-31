@@ -9,6 +9,8 @@ public static class AppPaths
 
     public static string ConfigPath => Path.Combine(AppDataRoot, "config.json");
 
+    public static string LogsRoot => Path.Combine(AppDataRoot, "logs");
+
     public static string BufferRoot => Path.Combine(AppDataRoot, "buffers");
 
     public static string UpdatesRoot => Path.Combine(AppDataRoot, "updates");

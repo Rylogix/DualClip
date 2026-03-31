@@ -11,6 +11,8 @@ internal static class StartupDiagnostics
 
     public static void Write(string message)
     {
+        AppLog.Info("Startup", message);
+
         try
         {
             Directory.CreateDirectory(AppPaths.AppDataRoot);

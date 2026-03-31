@@ -24,22 +24,9 @@ public sealed class FfmpegClipEditor
             "-i", request.InputPath,
         };
 
-        if (request.TrimStartSeconds is not null && request.TrimStartSeconds.Value > 0)
-        {
-            arguments.AddRange(["-ss", FormatNumber(request.TrimStartSeconds.Value)]);
-        }
-
-        if (request.TrimEndSeconds is not null && request.TrimStartSeconds is not null)
-        {
-            arguments.AddRange(["-t", FormatNumber(request.TrimEndSeconds.Value - request.TrimStartSeconds.Value)]);
-        }
-        else if (request.TrimEndSeconds is not null)
-        {
-            arguments.AddRange(["-to", FormatNumber(request.TrimEndSeconds.Value)]);
-        }
-
         var filterChain = BuildFilterChain(request);
         var complexFilter = BuildComplexFilter(request);
+        var audioFilter = BuildAudioFilter(request);
 
         if (!string.IsNullOrWhiteSpace(complexFilter))
         {
@@ -48,6 +35,11 @@ public sealed class FfmpegClipEditor
         else if (!string.IsNullOrWhiteSpace(filterChain))
         {
             arguments.AddRange(["-vf", filterChain]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(audioFilter))
+        {
+            arguments.AddRange(["-af", audioFilter]);
         }
 
         var videoMap = string.IsNullOrWhiteSpace(complexFilter) ? "0:v:0" : "[vout]";
@@ -159,6 +151,7 @@ public sealed class FfmpegClipEditor
         }
 
         var filters = new List<string>();
+        AppendTrimFilter(filters, request);
 
         if (request.CropX is not null && request.CropY is not null && request.CropWidth is not null && request.CropHeight is not null)
         {
@@ -188,6 +181,7 @@ public sealed class FfmpegClipEditor
         }
 
         AppendEvenOutputFilter(filters);
+        filters.Add("setpts=PTS-STARTPTS");
         filters.Add("setsar=1");
         return string.Join(",", filters);
     }
@@ -213,8 +207,10 @@ public sealed class FfmpegClipEditor
 
         var clipFilters = new List<string>
         {
-            $"crop=w={cropWidth}:h={cropHeight}:x={cropX}:y={cropY}"
         };
+
+        AppendTrimFilter(clipFilters, request);
+        clipFilters.Add($"crop=w={cropWidth}:h={cropHeight}:x={cropX}:y={cropY}");
 
         if (request.ZoomKeyframe1TimeSeconds is not null
             && request.ZoomKeyframe2TimeSeconds is not null
@@ -266,7 +262,7 @@ public sealed class FfmpegClipEditor
         return
             $"[0:v]{string.Join(",", clipFilters)}[fg];" +
             $"color=c=black:s={outputWidth}x{outputHeight}:r={Math.Max(1, request.FpsTarget)}[bg];" +
-            $"[bg][fg]overlay=x='{overlayX}':y='{overlayY}':format=auto,setsar=1[vout]";
+            $"[bg][fg]overlay=x='{overlayX}':y='{overlayY}':format=auto,setpts=PTS-STARTPTS,setsar=1[vout]";
     }
 
     private static bool NeedsComplexFilter(VideoEditRequest request)
@@ -289,6 +285,54 @@ public sealed class FfmpegClipEditor
     private static void AppendEvenOutputFilter(ICollection<string> filters)
     {
         filters.Add("crop=w=iw-mod(iw\\,2):h=ih-mod(ih\\,2)");
+    }
+
+    private static void AppendTrimFilter(ICollection<string> filters, VideoEditRequest request)
+    {
+        if (request.TrimStartSeconds is null && request.TrimEndSeconds is null)
+        {
+            return;
+        }
+
+        var trimArguments = new List<string>();
+
+        if (request.TrimStartSeconds is not null)
+        {
+            trimArguments.Add($"start={FormatNumber(request.TrimStartSeconds.Value)}");
+        }
+
+        if (request.TrimEndSeconds is not null)
+        {
+            trimArguments.Add($"end={FormatNumber(request.TrimEndSeconds.Value)}");
+        }
+
+        filters.Add($"trim={string.Join(":", trimArguments)}");
+    }
+
+    private static string BuildAudioFilter(VideoEditRequest request)
+    {
+        if (request.TrimStartSeconds is null && request.TrimEndSeconds is null)
+        {
+            return string.Empty;
+        }
+
+        var trimArguments = new List<string>();
+
+        if (request.TrimStartSeconds is not null)
+        {
+            trimArguments.Add($"start={FormatNumber(request.TrimStartSeconds.Value)}");
+        }
+
+        if (request.TrimEndSeconds is not null)
+        {
+            trimArguments.Add($"end={FormatNumber(request.TrimEndSeconds.Value)}");
+        }
+
+        return string.Join(
+            ",",
+            $"atrim={string.Join(":", trimArguments)}",
+            "asetpts=PTS-STARTPTS",
+            "aresample=async=1:first_pts=0");
     }
 
     private static string FormatNumber(double value)

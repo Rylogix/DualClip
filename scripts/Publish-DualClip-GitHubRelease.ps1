@@ -7,7 +7,9 @@ param(
 
     [switch]$Upload,
 
-    [string]$NotesFile
+    [string]$NotesFile,
+
+    [string[]]$MsixRuntimeIdentifiers = @('win-x64', 'win-arm64')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,14 +28,92 @@ if ($normalizedVersion -notmatch '^\d+\.\d+\.\d+([\-+][0-9A-Za-z\.-]+)?$') {
 
 $tag = "v$normalizedVersion"
 $releaseRoot = Join-Path $repoRoot "artifacts\github-release\$normalizedVersion"
-$publishDir = Join-Path $releaseRoot "publish"
+$portableRoot = Join-Path $releaseRoot "portable"
+$publishDir = Join-Path $portableRoot "publish"
 $assetName = "DualClip.App-$normalizedVersion.exe"
-$assetPath = Join-Path $releaseRoot $assetName
-$msixRoot = Join-Path $releaseRoot "msix"
+$assetPath = Join-Path $portableRoot $assetName
+$storeSubmissionRoot = Join-Path $releaseRoot "store-submission"
+$msixRoot = Join-Path $storeSubmissionRoot "packages"
+$storeSubmissionGuidePath = Join-Path $storeSubmissionRoot "README.txt"
 $projectPath = Join-Path $repoRoot "src\DualClip.App\DualClip.App.csproj"
 $repository = "Rylogix/DualClip"
-$msixPath = $null
-$msixUploadPath = $null
+$msixArtifacts = @()
+
+function Invoke-MsixBuild {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RuntimeIdentifier,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot
+    )
+
+    $scriptOutput = @(& (Join-Path $PSScriptRoot "Build-DualClipMsix.ps1") `
+        -Version $normalizedVersion `
+        -Configuration Release `
+        -RuntimeIdentifier $RuntimeIdentifier `
+        -OutputRoot $OutputRoot)
+
+    $result = $scriptOutput |
+        Where-Object { $_ -and $_.PSObject.Properties.Match('MsixPath').Count -gt 0 } |
+        Select-Object -Last 1
+
+    if (-not $result) {
+        throw "MSIX build for '$RuntimeIdentifier' did not return a package result."
+    }
+
+    return $result
+}
+
+function Get-RelativePathCompat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BasePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetPath
+    )
+
+    $baseDirectory = [System.IO.Path]::GetFullPath($BasePath)
+    if (-not $baseDirectory.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+        $baseDirectory += [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    $baseUri = [System.Uri]::new($baseDirectory)
+    $targetUri = [System.Uri]::new([System.IO.Path]::GetFullPath($TargetPath))
+    return [System.Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString()).Replace('/', '\')
+}
+
+function Write-StoreSubmissionGuide {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GuidePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ArtifactPaths
+    )
+
+    $lines = @(
+        "DualClip Store Submission Assets",
+        "Version: $normalizedVersion",
+        "",
+        "Use the .msixupload files below for Partner Center submission:",
+        ""
+    )
+
+    foreach ($artifactPath in ($ArtifactPaths | Where-Object { $_ -like '*.msixupload' } | Sort-Object)) {
+        $relativePath = Get-RelativePathCompat -BasePath $releaseRoot -TargetPath $artifactPath
+        $lines += " - $relativePath"
+    }
+
+    $lines += @(
+        "",
+        "Portable asset:",
+        " - " + (Get-RelativePathCompat -BasePath $releaseRoot -TargetPath $assetPath)
+    )
+
+    [System.IO.File]::WriteAllLines($GuidePath, $lines)
+}
 
 Write-Host "Preparing GitHub release asset for $tag..."
 
@@ -42,6 +122,7 @@ if (Test-Path $releaseRoot) {
 }
 
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+New-Item -ItemType Directory -Path $storeSubmissionRoot -Force | Out-Null
 
 dotnet publish $projectPath `
   -c Release `
@@ -65,21 +146,27 @@ Copy-Item -LiteralPath (Join-Path $publishDir "DualClip.App.exe") -Destination $
 if ($IncludeMsix) {
     Write-Host ""
     Write-Host "Building MSIX release assets..."
-    $msixResult = & (Join-Path $PSScriptRoot "Build-DualClipMsix.ps1") `
-        -Version $normalizedVersion `
-        -Configuration Release `
-        -OutputRoot $msixRoot
+    foreach ($runtimeIdentifier in ($MsixRuntimeIdentifiers | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $architectureRoot = Join-Path $msixRoot ($runtimeIdentifier -replace '^win-', '')
+        Write-Host "  -> $runtimeIdentifier"
+        $msixResult = Invoke-MsixBuild -RuntimeIdentifier $runtimeIdentifier -OutputRoot $architectureRoot
 
-    $msixPath = $msixResult.MsixPath
-    $msixUploadPath = $msixResult.MsixUploadPath
+        $msixArtifacts += @($msixResult.MsixPath, $msixResult.MsixUploadPath) | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_)
+        }
+    }
+
+    Write-StoreSubmissionGuide -GuidePath $storeSubmissionGuidePath -ArtifactPaths $msixArtifacts
 }
 
 Write-Host ""
 Write-Host "Release asset created:"
 Write-Host "  $assetPath"
 if ($IncludeMsix) {
-    Write-Host "  $msixPath"
-    Write-Host "  $msixUploadPath"
+    Write-Host "  $storeSubmissionGuidePath"
+    foreach ($msixArtifact in $msixArtifacts) {
+        Write-Host "  $msixArtifact"
+    }
 }
 Write-Host ""
 Write-Host "GitHub tag:"
@@ -101,13 +188,7 @@ Write-Host "Uploading $assetPath to $repository..."
 
 $assetsToUpload = @($assetPath)
 if ($IncludeMsix) {
-    if (-not [string]::IsNullOrWhiteSpace($msixPath) -and (Test-Path -LiteralPath $msixPath)) {
-        $assetsToUpload += $msixPath
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($msixUploadPath) -and (Test-Path -LiteralPath $msixUploadPath)) {
-        $assetsToUpload += $msixUploadPath
-    }
+    $assetsToUpload += $msixArtifacts
 }
 
 & $gh.Source release view $tag --repo $repository *> $null

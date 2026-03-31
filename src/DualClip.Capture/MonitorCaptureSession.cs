@@ -476,7 +476,15 @@ public sealed class MonitorCaptureSession : IAsyncDisposable
 
         try
         {
-            _session.IsBorderRequired = false;
+            var isBorderRequiredProperty = _session.GetType().GetProperty("IsBorderRequired");
+
+            if (isBorderRequiredProperty is null || !isBorderRequiredProperty.CanWrite)
+            {
+                PublishStatus($"Windows does not expose borderless capture on {Options.SlotName}.");
+                return;
+            }
+
+            isBorderRequiredProperty.SetValue(_session, false);
             PublishStatus($"Capturing {Options.Monitor.DisplayName} without the Windows border.");
         }
         catch (Exception ex)
